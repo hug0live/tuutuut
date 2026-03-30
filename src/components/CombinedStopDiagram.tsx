@@ -553,7 +553,6 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                 stop={stop}
                 lineY={projection.lineY}
                 isSelected={stop.stopName === selection.stop.name}
-                showLabel={false}
               />
             ))}
 

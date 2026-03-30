@@ -283,7 +283,6 @@ export function App(): JSX.Element {
                   selectedStop={draftStop}
                   onSelectStop={handleStopSelect}
                   onClearStop={handleStopClear}
-                  compact
                 />
               </div>
 

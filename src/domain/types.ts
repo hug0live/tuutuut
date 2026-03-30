@@ -70,12 +70,6 @@ export type RealtimePassage = {
   status: RealtimePassageStatus;
 };
 
-export type SelectedConfig = {
-  stopId: string | null;
-  directionKey: string | null;
-  lineIds: string[];
-};
-
 export type DataSourceMode = "mock" | "tcl";
 
 export type AdapterSourceInfo = {
