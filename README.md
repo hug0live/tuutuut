@@ -1,0 +1,194 @@
+# TCL Live Dashboard
+
+Application web React + Vite + TypeScript pour afficher des lignes de bus TCL sur un dashboard grand format, sans carte geographique, avec un mode mock fonctionnel par defaut.
+
+## Installation
+
+```bash
+npm install
+```
+
+## Lancement
+
+```bash
+npm run dev
+```
+
+Puis ouvrir l'URL affichee par Vite, en general `http://localhost:5173`.
+
+## Configuration rapide
+
+Le fichier `.env.example` documente les variables utiles.
+
+- sans configuration, l'application tourne en mode `mock`
+- le projet local est deja configure en `.env.local` pour utiliser le temps reel via `Bus Tracker`
+- pour activer le flux officiel TCL a la place, il faut configurer un proxy local ou serveur sur `/api/tcl/realtime`
+- en dev, `vite.config.ts` peut proxifier automatiquement le flux officiel si `TCL_REALTIME_URL` et les credentials sont presents dans l'environnement shell
+
+## Build de verification
+
+```bash
+npm run build
+```
+
+## Fonctionnalites
+
+- recherche d'arret TCL
+- selection d'un arret
+- chargement des lignes desservant cet arret
+- selection multiple de lignes et de directions
+- affichage horizontal SVG des arrets dans le bon ordre
+- positionnement temps reel des vehicules sur chaque ligne
+- rafraichissement automatique toutes les 10 secondes
+- arrets, lignes et directions reels issus d'un snapshot GTFS TCL officiel
+- resilience UI avec loading, empty state et erreur non bloquante
+
+## Architecture
+
+```text
+src/
+  app/
+    App.tsx
+  components/
+    Dashboard.tsx
+    ErrorState.tsx
+    LineDiagram.tsx
+    LineSelector.tsx
+    LoadingState.tsx
+    StatusBar.tsx
+    StopMarker.tsx
+    StopSelector.tsx
+    VehicleMarker.tsx
+  domain/
+    lineProjection.ts
+    types.ts
+    vehiclePositioning.ts
+  hooks/
+    useLineStops.ts
+    useLinesByStop.ts
+    usePolling.ts
+    useRealtimeVehicles.ts
+    useStopsSearch.ts
+  mocks/
+    tclBusCatalog.json
+  services/
+    api/
+      tclClient.ts
+      adapters/
+        mockAdapter.ts
+        tclAdapter.ts
+  store/
+    useAppStore.ts
+  styles/
+    app.css
+  main.tsx
+```
+
+## Mode mock
+
+Le mode mock est la source active par defaut.
+
+- aucune API externe n'est necessaire
+- les arrets, lignes et directions proviennent d'un snapshot GTFS TCL officiel derive localement
+- la relation arret -> lignes -> directions est calculee depuis ce catalogue reel
+- l'ordre des arrets par ligne est derive du GTFS, avec prise en compte de plusieurs patterns par direction
+- les vehicules ne sont pas figes : leur position est simulee localement a partir du temps courant et evolue a chaque refresh
+
+Le choix de la source se fait dans `src/services/api/tclClient.ts`. Par defaut, `VITE_DATA_SOURCE` vaut implicitement `mock`. Pour preparer un branchement reel plus tard, on peut lancer Vite avec :
+
+```bash
+VITE_DATA_SOURCE=tcl npm run dev
+```
+
+Dans ce mode :
+
+- la recherche d'arrets, les lignes et les schemas de ligne restent bases sur le catalogue GTFS local reel
+- les positions vehicules sont lues par defaut depuis l'API publique `bus-tracker.fr`
+- une option officielle SIRI Lite existe aussi via `VITE_TCL_REALTIME_PROVIDER=official` et `VITE_TCL_REALTIME_PROXY_PATH`
+- si la source choisie est indisponible, l'UI reste stable et affiche `Temps reel indisponible`
+
+## Points de branchement TCL reels
+
+Le point d'extension principal est l'interface `TransportAdapter` dans `src/services/api/tclClient.ts`.
+
+Methodes attendues :
+
+- `searchStops(query)`
+- `getLinesByStop(stopId)`
+- `getLineStops(lineId, directionId?)`
+- `getRealtimeVehicles(lineId)`
+- `getRealtimePassages(stopId, lineIds?)`
+
+Le fichier `src/services/api/adapters/tclAdapter.ts` branche maintenant :
+
+- la topologie statique depuis le catalogue GTFS local reel
+- le flux public Bus Tracker pour les positions vehicules temps reel sans credentials
+- le flux `VehicleMonitoring` SIRI Lite officiel en option
+- une projection GPS -> segment de ligne quand les references d'arrets ne suffisent pas
+
+Il reste volontairement un TODO sur `getRealtimePassages`, qui utilise encore le fallback mock tant que le `StopMonitoring` reel n'est pas raccorde.
+
+## Mode temps reel actif
+
+Par defaut dans ce repo local :
+
+```bash
+VITE_DATA_SOURCE=tcl
+VITE_TCL_REALTIME_PROVIDER=bus-tracker
+```
+
+Ce mode fournit :
+
+- de vraies positions GPS temps reel pour les vehicules TCL
+- sans credentials supplementaires
+- avec `access-control-allow-origin: *` sur l'API publique Bus Tracker, donc appel direct depuis le frontend
+
+## Mode temps reel TCL officiel
+
+Etat verifie le 30 mars 2026 :
+
+- la fiche officielle du jeu de donnees Grand Lyon/TCL annonce un flux vehicules temps reel en standard SIRI
+- le portail `transport.data.gouv.fr` indique que le producteur demande une authentification pour acceder a ces donnees
+- le projet ne met donc jamais les credentials dans le bundle frontend
+
+Configuration type en local :
+
+```bash
+cp .env.example .env.local
+```
+
+Puis definir dans ton shell ou dans `.env.local` :
+
+```bash
+VITE_DATA_SOURCE=tcl
+VITE_TCL_REALTIME_PROVIDER=official
+VITE_TCL_REALTIME_PROXY_PATH=/api/tcl/realtime
+TCL_REALTIME_URL=https://data.grandlyon.com/siri-lite/2.0/vehicle-monitoring.json
+TCL_REALTIME_AUTH_HEADER=Basic <base64 credentials>
+```
+
+Exemple pour fabriquer le header Basic :
+
+```bash
+printf '%s' 'identifiant:motdepasse' | base64
+```
+
+Le resultat se colle ensuite apres `Basic ` dans `TCL_REALTIME_AUTH_HEADER`.
+
+En developpement, `vite.config.ts` intercepte `/api/tcl/realtime` et relaie la requete vers la source officielle avec les credentials cote serveur. En production, il faut exposer le meme chemin via un reverse proxy ou un petit backend.
+
+## Notes de conception
+
+- Le rendu horizontal SVG est calcule dans `src/domain/lineProjection.ts`.
+- Le placement des vehicules et le leger decalage anti-collision sont geres dans `src/domain/vehiclePositioning.ts`.
+- Le polling temps reel est centralise dans `src/hooks/usePolling.ts`.
+- L'etat de selection est volontairement leger et persiste en `localStorage` via `src/store/useAppStore.ts`.
+- Le catalogue local reel est genere par `scripts/build_tcl_bus_catalog.py` a partir d'un GTFS TCL officiel.
+
+## Priorite respectee
+
+1. mode mock operationnel immediatement
+2. selection arret -> lignes
+3. rendu horizontal SVG
+4. vehicules dynamiques
+5. architecture prete pour une integration TCL reelle
