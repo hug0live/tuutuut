@@ -31,6 +31,32 @@ Le fichier `.env.example` documente les variables utiles.
 npm run build
 ```
 
+## Deploiement GitHub Pages
+
+Le repo `hug0live/tuutuut` peut maintenant se publier automatiquement sur GitHub Pages via le workflow `.github/workflows/deploy-pages.yml`.
+
+- le build GitHub Pages detecte automatiquement le sous-chemin du repo et sort les assets sous `/tuutuut/`
+- le workflow publie sur chaque push vers `main`
+- le build Pages force `VITE_DATA_SOURCE=tcl` et `VITE_TCL_REALTIME_PROVIDER=bus-tracker`
+- aucun secret n'est necessaire pour ce mode, car `bus-tracker.fr` est appele directement depuis le navigateur
+
+Activation une seule fois dans GitHub :
+
+1. ouvrir `Settings` -> `Pages`
+2. verifier que la source est `GitHub Actions`
+3. pousser sur `main` ou lancer le workflow manuellement depuis l'onglet `Actions`
+
+Pour tester localement le meme contexte que GitHub Pages :
+
+```bash
+VITE_BASE_PATH=/tuutuut/ VITE_DATA_SOURCE=tcl VITE_TCL_REALTIME_PROVIDER=bus-tracker npm run build
+```
+
+Important :
+
+- le mode `official` TCL ne convient pas a GitHub Pages seul, car il demande un proxy ou backend pour proteger les credentials
+- le mode local par defaut reste `mock`, afin de garder un demarrage sans dependance externe
+
 ## Fonctionnalites
 
 - recherche d'arret TCL
