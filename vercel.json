@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/bus-tracker/:match*",
+      "destination": "https://bus-tracker.fr/api/:match*"
+    }
+  ]
+}

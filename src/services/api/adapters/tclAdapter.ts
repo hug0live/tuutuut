@@ -10,8 +10,6 @@ import type {
 } from "../../../domain/types";
 import { mockAdapter } from "./mockAdapter";
 
-type JsonRecord = Record<string, unknown>;
-
 type CatalogStop = {
   id: string;
   name: string;
@@ -47,8 +45,6 @@ type CoordinatePoint = {
   lat: number;
   lon: number;
 };
-
-type RealtimeProvider = "bus-tracker" | "official";
 
 type BusTrackerLine = {
   id: number;
@@ -96,9 +92,7 @@ type VehicleDirectionSnapshot = {
 };
 
 const catalogUrl = new URL("../../../mocks/tclBusCatalog.json", import.meta.url).href;
-const realtimeProxyPath = normalizeProxyPath(import.meta.env.VITE_TCL_REALTIME_PROXY_PATH);
-const realtimeProvider = resolveRealtimeProvider(import.meta.env.VITE_TCL_REALTIME_PROVIDER);
-const busTrackerApiBaseUrl = "https://bus-tracker.fr/api";
+const busTrackerApiBaseUrl = normalizeBusTrackerApiBaseUrl(import.meta.env.VITE_BUS_TRACKER_PROXY_PATH);
 const busTrackerNetworkId = 91;
 const orderedStopsCache = new Map<string, Promise<LineStop[]>>();
 const busTrackerLineCache = new Map<string, Promise<BusTrackerLine | null>>();
@@ -106,16 +100,14 @@ const vehicleDirectionSnapshots = new Map<string, VehicleDirectionSnapshot>();
 let catalogPromise: Promise<CatalogRuntime> | null = null;
 let busTrackerNetworkPromise: Promise<BusTrackerNetwork> | null = null;
 
-function resolveRealtimeProvider(value: string | undefined): RealtimeProvider {
-  return value === "official" ? "official" : "bus-tracker";
-}
+function normalizeBusTrackerApiBaseUrl(value: string | undefined): string {
+  const trimmedValue = value?.trim();
 
-function normalizeProxyPath(value: string | undefined): string {
-  if (!value) {
-    return "/api/tcl/realtime";
+  if (!trimmedValue) {
+    return "/api/bus-tracker";
   }
 
-  return value.startsWith("/") ? value : `/${value}`;
+  return trimmedValue.startsWith("/") ? trimmedValue : `/${trimmedValue}`;
 }
 
 function normalizeBusTrackerLineRef(value: string): string {
@@ -134,148 +126,8 @@ function normalizeIdentifier(value: string): string {
   return normalizeText(value).replace(/[^a-z0-9]+/g, "");
 }
 
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function getValueAtPath(root: unknown, path: string[]): unknown {
-  let current: unknown = root;
-
-  for (const key of path) {
-    if (!isRecord(current) || !(key in current)) {
-      return undefined;
-    }
-
-    current = current[key];
-  }
-
-  return current;
-}
-
-function getRecordAtPaths(root: unknown, paths: string[][]): JsonRecord | undefined {
-  for (const path of paths) {
-    const candidate = getValueAtPath(root, path);
-
-    if (isRecord(candidate)) {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
-
-function getArrayAtPaths(root: unknown, paths: string[][]): unknown[] {
-  for (const path of paths) {
-    const candidate = getValueAtPath(root, path);
-
-    if (Array.isArray(candidate)) {
-      return candidate;
-    }
-  }
-
-  return [];
-}
-
-function collectTextValues(value: unknown): string[] {
-  if (typeof value === "string") {
-    return value.trim() ? [value.trim()] : [];
-  }
-
-  if (typeof value === "number") {
-    return [String(value)];
-  }
-
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => collectTextValues(entry));
-  }
-
-  if (!isRecord(value)) {
-    return [];
-  }
-
-  return [
-    ...collectTextValues(value.value),
-    ...collectTextValues(value.Value),
-    ...collectTextValues(value.text),
-    ...collectTextValues(value.Text),
-    ...collectTextValues(value.name),
-    ...collectTextValues(value.Name),
-    ...collectTextValues(value.FrontText),
-    ...collectTextValues(value.ref),
-    ...collectTextValues(value.Ref)
-  ];
-}
-
-function getTextCandidates(root: unknown, paths: string[][]): string[] {
-  return [...new Set(paths.flatMap((path) => collectTextValues(getValueAtPath(root, path))))];
-}
-
-function getNumberCandidate(root: unknown, paths: string[][]): number | undefined {
-  for (const path of paths) {
-    const value = getValueAtPath(root, path);
-
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-
-    if (typeof value === "string") {
-      const parsedValue = Number.parseFloat(value);
-
-      if (Number.isFinite(parsedValue)) {
-        return parsedValue;
-      }
-    }
-  }
-
-  return undefined;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function normalizeProgress(value: number | undefined): number | undefined {
-  if (value === undefined || Number.isNaN(value)) {
-    return undefined;
-  }
-
-  if (value > 1 && value <= 100) {
-    return clamp(value / 100, 0, 1);
-  }
-
-  return clamp(value, 0, 1);
-}
-
-function toVehicleStatus(rawStatus: string | undefined, progress: number | undefined): VehicleStatus {
-  if (rawStatus) {
-    const normalizedStatus = normalizeText(rawStatus);
-
-    if (
-      normalizedStatus.includes("stop") ||
-      normalizedStatus.includes("quai") ||
-      normalizedStatus.includes("layover")
-    ) {
-      return "STOPPED";
-    }
-
-    if (
-      normalizedStatus.includes("transit") ||
-      normalizedStatus.includes("move") ||
-      normalizedStatus.includes("course")
-    ) {
-      return "IN_TRANSIT";
-    }
-  }
-
-  if (progress !== undefined && progress === 0) {
-    return "STOPPED";
-  }
-
-  if (progress !== undefined) {
-    return "IN_TRANSIT";
-  }
-
-  return "UNKNOWN";
 }
 
 function getLineStopCacheKey(lineId: string, directionId?: string, anchorStopId?: string): string {
@@ -318,65 +170,6 @@ async function loadCatalogRuntime(): Promise<CatalogRuntime> {
     }));
 
   return catalogPromise;
-}
-
-function collectVehicleActivities(root: unknown): JsonRecord[] {
-  const matches: JsonRecord[] = [];
-  const seenObjects = new Set<object>();
-
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      value.forEach((entry) => {
-        visit(entry);
-      });
-      return;
-    }
-
-    if (!isRecord(value) || seenObjects.has(value)) {
-      return;
-    }
-
-    seenObjects.add(value);
-
-    const vehicleActivity = value.VehicleActivity;
-
-    if (Array.isArray(vehicleActivity)) {
-      vehicleActivity.forEach((entry) => {
-        if (isRecord(entry)) {
-          matches.push(entry);
-        }
-      });
-    }
-
-    Object.values(value).forEach((entry) => {
-      visit(entry);
-    });
-  }
-
-  visit(root);
-  return matches;
-}
-
-function createStopNameIndex(lineStops: LineStop[]): Map<string, string> {
-  return new Map(lineStops.map((stop) => [normalizeText(stop.stopName), stop.stopId]));
-}
-
-function matchStopId(candidateValues: string[], lineStops: LineStop[], stopNameIndex: Map<string, string>): string | undefined {
-  const stopIds = new Set(lineStops.map((stop) => stop.stopId));
-
-  for (const candidateValue of candidateValues) {
-    if (stopIds.has(candidateValue)) {
-      return candidateValue;
-    }
-
-    const matchedStopId = stopNameIndex.get(normalizeText(candidateValue));
-
-    if (matchedStopId) {
-      return matchedStopId;
-    }
-  }
-
-  return undefined;
 }
 
 function getCoordinatePoint(stopById: Map<string, CatalogStop>, stopId: string): CoordinatePoint | null {
@@ -568,191 +361,6 @@ async function resolveBusTrackerLine(line: CatalogLine): Promise<BusTrackerLine 
   return pendingValue;
 }
 
-function matchesLine(activity: JsonRecord, line: CatalogLine): boolean {
-  const candidateValues = getTextCandidates(activity, [
-    ["MonitoredVehicleJourney", "LineRef"],
-    ["MonitoredVehicleJourney", "PublishedLineName"],
-    ["LineRef"],
-    ["PublishedLineName"]
-  ]);
-
-  if (candidateValues.length === 0) {
-    return true;
-  }
-
-  const acceptedIdentifiers = new Set(
-    [line.id, line.shortName, line.longName].map((value) => normalizeIdentifier(value))
-  );
-
-  return candidateValues.some((candidateValue) => {
-    const normalizedCandidate = normalizeIdentifier(candidateValue);
-
-    if (acceptedIdentifiers.has(normalizedCandidate)) {
-      return true;
-    }
-
-    const parts = candidateValue
-      .split(/[^a-zA-Z0-9]+/g)
-      .map((part) => normalizeIdentifier(part))
-      .filter(Boolean);
-
-    return parts.some((part) => acceptedIdentifiers.has(part));
-  });
-}
-
-function matchesDirection(activity: JsonRecord, directionId: string | undefined, directionName: string | undefined): boolean {
-  const candidateValues = getTextCandidates(activity, [
-    ["MonitoredVehicleJourney", "DirectionRef"],
-    ["MonitoredVehicleJourney", "DirectionName"],
-    ["MonitoredVehicleJourney", "DestinationRef"],
-    ["MonitoredVehicleJourney", "DestinationName"],
-    ["MonitoredVehicleJourney", "DestinationDisplay"]
-  ]);
-
-  if (!directionId && !directionName) {
-    return true;
-  }
-
-  if (candidateValues.length === 0) {
-    return true;
-  }
-
-  const normalizedDirectionId = directionId ? normalizeIdentifier(directionId) : undefined;
-  const normalizedDirectionName = directionName ? normalizeIdentifier(directionName) : undefined;
-
-  return candidateValues.some((candidateValue) => {
-    const normalizedCandidate = normalizeIdentifier(candidateValue);
-
-    if (normalizedDirectionId && normalizedCandidate === normalizedDirectionId) {
-      return true;
-    }
-
-    if (normalizedDirectionName && normalizedCandidate === normalizedDirectionName) {
-      return true;
-    }
-
-    const parts = candidateValue
-      .split(/[^a-zA-Z0-9]+/g)
-      .map((part) => normalizeIdentifier(part))
-      .filter(Boolean);
-
-    return parts.some((part) => part === normalizedDirectionId || part === normalizedDirectionName);
-  });
-}
-
-function buildVehicleFromActivity(
-  activity: JsonRecord,
-  lineId: string,
-  directionId: string | undefined,
-  lineStops: LineStop[],
-  stopById: Map<string, CatalogStop>
-): VehiclePosition | null {
-  const journey = getRecordAtPaths(activity, [["MonitoredVehicleJourney"]]) ?? activity;
-  const vehicleId =
-    getTextCandidates(activity, [["VehicleMonitoringRef"], ["ItemIdentifier"], ["VehicleRef"]])[0] ??
-    getTextCandidates(journey, [["VehicleRef"]])[0];
-
-  if (!vehicleId) {
-    return null;
-  }
-
-  const stopNameIndex = createStopNameIndex(lineStops);
-  const monitoredCall = getRecordAtPaths(journey, [["MonitoredCall"]]);
-  const onwardCalls = getArrayAtPaths(journey, [["OnwardCalls", "OnwardCall"], ["OnwardCall"]]);
-  const previousCalls = getArrayAtPaths(journey, [["PreviousCalls", "PreviousCall"], ["PreviousCall"]]);
-  const nextStopId = matchStopId(
-    [
-      ...getTextCandidates(monitoredCall, [["StopPointRef"], ["StopPointName"]]),
-      ...getTextCandidates(onwardCalls[0], [["StopPointRef"], ["StopPointName"]])
-    ],
-    lineStops,
-    stopNameIndex
-  );
-  const previousStopId = matchStopId(
-    [
-      ...getTextCandidates(previousCalls[previousCalls.length - 1], [["StopPointRef"], ["StopPointName"]]),
-      ...getTextCandidates(journey, [["OriginRef"], ["OriginName"]])
-    ],
-    lineStops,
-    stopNameIndex
-  );
-  const directProgress = normalizeProgress(
-    getNumberCandidate(activity, [
-      ["ProgressBetweenStops"],
-      ["ProgressBetweenStops", "Percentage"],
-      ["MonitoredVehicleJourney", "ProgressBetweenStops"],
-      ["MonitoredVehicleJourney", "ProgressBetweenStops", "Percentage"]
-    ])
-  );
-  const lat = getNumberCandidate(journey, [
-    ["VehicleLocation", "Latitude"],
-    ["VehicleLocation", "lat"],
-    ["Latitude"]
-  ]);
-  const lon = getNumberCandidate(journey, [
-    ["VehicleLocation", "Longitude"],
-    ["VehicleLocation", "lon"],
-    ["Longitude"]
-  ]);
-  const projectedSegment =
-    lat !== undefined && lon !== undefined
-      ? projectGpsToLine(
-          {
-            lat,
-            lon
-          },
-          lineStops,
-          stopById
-        )
-      : null;
-  const statusValue =
-    getTextCandidates(activity, [["ProgressStatus"], ["VehicleStatus"], ["MonitoredVehicleJourney", "ProgressStatus"]])[
-      0
-    ] ?? getTextCandidates(journey, [["ProgressStatus"], ["VehicleStatus"]])[0];
-  const segment = {
-    stopIdPrevious: previousStopId ?? projectedSegment?.stopIdPrevious,
-    stopIdNext: nextStopId ?? projectedSegment?.stopIdNext,
-    progressBetweenStops: directProgress ?? projectedSegment?.progressBetweenStops
-  };
-
-  if (!segment.stopIdPrevious && !segment.stopIdNext) {
-    return null;
-  }
-
-  const timestamp =
-    getTextCandidates(activity, [["RecordedAtTime"], ["ValidUntilTime"], ["ResponseTimestamp"]])[0] ??
-    new Date().toISOString();
-
-  return {
-    vehicleId,
-    lineId,
-    ...(directionId ? { directionId } : {}),
-    ...(segment.stopIdPrevious ? { stopIdPrevious: segment.stopIdPrevious } : {}),
-    ...(segment.stopIdNext ? { stopIdNext: segment.stopIdNext } : {}),
-    ...(segment.progressBetweenStops !== undefined
-      ? { progressBetweenStops: clamp(segment.progressBetweenStops, 0, 1) }
-      : {}),
-    timestamp,
-    status: toVehicleStatus(statusValue, segment.progressBetweenStops)
-  };
-}
-
-async function fetchRealtimePayload(): Promise<unknown> {
-  const response = await fetch(realtimeProxyPath, {
-    headers: {
-      Accept: "application/json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Flux TCL temps reel indisponible (${response.status}). Configure ${realtimeProxyPath} via Vite ou un proxy serveur.`
-    );
-  }
-
-  return response.json();
-}
-
 function buildVehicleFromBusTrackerVehicle(
   vehicle: BusTrackerVehicle,
   lineId: string,
@@ -820,45 +428,68 @@ async function fetchBusTrackerRealtimeVehicles(
     .filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
 }
 
-async function fetchOfficialRealtimeVehicles(
-  line: CatalogLine,
-  lineStops: LineStop[],
-  stopById: Map<string, CatalogStop>,
-  directionId: string | undefined
-): Promise<VehiclePosition[]> {
-  const payload = await fetchRealtimePayload();
-  const directionName =
-    directionId !== undefined
-      ? line.directions.find((direction) => direction.id === directionId)?.name
-      : undefined;
-  const vehicles = collectVehicleActivities(payload)
-    .filter((activity) => matchesLine(activity, line))
-    .filter((activity) => matchesDirection(activity, directionId, directionName))
-    .map((activity) => buildVehicleFromActivity(activity, line.id, directionId, lineStops, stopById))
-    .filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
+function findAnchorIndex(fullLineStops: LineStop[], displayedLineStops: LineStop[]): number | null {
+  const anchorStop = displayedLineStops.at(-1);
 
-  return [...new Map(vehicles.map((vehicle) => [vehicle.vehicleId, vehicle])).values()].sort((left, right) =>
-    left.vehicleId.localeCompare(right.vehicleId, "fr", { numeric: true, sensitivity: "base" })
-  );
+  if (!anchorStop) {
+    return null;
+  }
+
+  const exactIndex = fullLineStops.findIndex((stop) => stop.stopId === anchorStop.stopId);
+
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  const normalizedAnchorName = normalizeText(anchorStop.stopName);
+  const nameMatches = fullLineStops
+    .map((stop, index) => ({
+      index,
+      isMatch: normalizeText(stop.stopName) === normalizedAnchorName
+    }))
+    .filter((entry) => entry.isMatch)
+    .map((entry) => entry.index);
+
+  return nameMatches.at(-1) ?? null;
+}
+
+function filterVehiclesAtOrBeforeAnchor(
+  vehicles: VehiclePosition[],
+  fullLineStops: LineStop[],
+  displayedLineStops: LineStop[]
+): VehiclePosition[] {
+  const anchorIndex = findAnchorIndex(fullLineStops, displayedLineStops);
+
+  if (anchorIndex === null) {
+    return vehicles;
+  }
+
+  const stopIndexById = new Map(fullLineStops.map((stop, index) => [stop.stopId, index]));
+
+  return vehicles.filter((vehicle) => {
+    const previousIndex = vehicle.stopIdPrevious ? stopIndexById.get(vehicle.stopIdPrevious) : undefined;
+    const nextIndex = vehicle.stopIdNext ? stopIndexById.get(vehicle.stopIdNext) : undefined;
+
+    if ((previousIndex ?? -1) > anchorIndex || (nextIndex ?? -1) > anchorIndex) {
+      return false;
+    }
+
+    if (previousIndex === anchorIndex && nextIndex === undefined && vehicle.status !== "STOPPED") {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 export const tclAdapter: TransportAdapter = {
-  source:
-    realtimeProvider === "official"
-      ? {
-          mode: "tcl",
-          label: "TCL temps reel via SIRI Lite",
-          detail:
-            "Topologie GTFS locale + positions vehicules reelles via proxy /api/tcl/realtime. Credentials officiels requis cote serveur.",
-          realtime: true
-        }
-      : {
-          mode: "tcl",
-          label: "GPS temps reel via Bus Tracker",
-          detail:
-            "Topologie GTFS TCL locale + positions vehicules reelles via l'API publique Bus Tracker. Sens affine au fil des refresh.",
-          realtime: true
-        },
+  source: {
+    mode: "tcl",
+    label: "GPS temps réel via Bus Tracker",
+    detail:
+      "Topologie GTFS locale + positions véhicules réelles via l'API publique Bus Tracker. Sens affiné au fil des rafraîchissements.",
+    realtime: true
+  },
 
   async searchStops(query: string): Promise<Stop[]> {
     return mockAdapter.searchStops(query);
@@ -877,25 +508,23 @@ export const tclAdapter: TransportAdapter = {
     directionId?: string,
     anchorStopId?: string
   ): Promise<VehiclePosition[]> {
-    const [{ lineById, stopById }, lineStops] = await Promise.all([
+    const [{ lineById, stopById }, fullLineStops, displayedLineStops] = await Promise.all([
       loadCatalogRuntime(),
+      loadOrderedLineStops(lineId, directionId),
       loadOrderedLineStops(lineId, directionId, anchorStopId)
     ]);
     const line = lineById.get(lineId);
 
-    if (!line || lineStops.length === 0) {
+    if (!line || fullLineStops.length === 0) {
       return [];
     }
 
-    if (realtimeProvider === "official") {
-      return fetchOfficialRealtimeVehicles(line, lineStops, stopById, directionId);
-    }
-
-    return fetchBusTrackerRealtimeVehicles(line, lineStops, stopById);
+    const vehicles = await fetchBusTrackerRealtimeVehicles(line, fullLineStops, stopById);
+    return filterVehiclesAtOrBeforeAnchor(vehicles, fullLineStops, displayedLineStops);
   },
 
   async getRealtimePassages(stopId: string, lineIds?: string[]): Promise<RealtimePassage[]> {
-    // Le dashboard principal s'appuie sur VehicleMonitoring. Le stop-monitoring reel reste a raccorder.
+    // Les passages restent estimes localement a partir du catalogue, Bus Tracker n'expose ici que les vehicules.
     return mockAdapter.getRealtimePassages(stopId, lineIds);
   }
 };

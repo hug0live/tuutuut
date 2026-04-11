@@ -72,7 +72,6 @@ button {
   border: 1px solid var(--border);
   border-radius: 28px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
 }
 
 .app-topbar {
@@ -88,21 +87,22 @@ button {
 
 .app-navbar {
   width: 100%;
-  padding: 14px clamp(18px, 3vw, 42px) 12px;
-  display: grid;
-  gap: 10px;
+  padding: 8px clamp(18px, 3vw, 42px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .app-navbar__main {
   display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-  align-items: flex-start;
-  min-height: 64px;
+  flex: 0 0 auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
 }
 
 .app-brand {
-  font-size: clamp(1.35rem, 1.8vw, 1.8rem);
+  font-size: clamp(1.2rem, 1.55vw, 1.55rem);
   font-weight: 800;
   letter-spacing: -0.06em;
   line-height: 1;
@@ -111,12 +111,42 @@ button {
   align-self: center;
 }
 
+.app-navbar__burger {
+  display: none;
+  width: 42px;
+  height: 42px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-navbar__burger span {
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.app-navbar__panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .app-navbar__controls {
-  flex: 1 1 620px;
+  flex: 1 1 auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  align-items: flex-end;
+  gap: 8px;
+  align-items: center;
   min-width: 0;
 }
 
@@ -124,32 +154,36 @@ button {
   flex: 0 1 300px;
   max-width: 320px;
   min-width: 0;
-  align-self: flex-end;
+  align-self: center;
 }
 
 .app-navbar__validated {
-  flex: 1 1 320px;
+  flex: 0 1 auto;
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
 }
 
+.app-navbar .error-state--compact {
+  display: none;
+}
+
 .nav-field {
   display: grid;
-  gap: 6px;
-  min-width: 170px;
+  gap: 4px;
+  min-width: 150px;
 }
 
 .nav-field--lines {
-  min-width: 240px;
+  min-width: 220px;
 }
 
 .nav-field__label {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -158,7 +192,7 @@ button {
 .nav-select,
 .nav-multiselect__trigger,
 .nav-confirm-button {
-  min-height: 48px;
+  min-height: 38px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.88);
@@ -167,7 +201,7 @@ button {
 
 .nav-select {
   min-width: 190px;
-  padding: 0 16px;
+  padding: 0 14px;
   outline: none;
 }
 
@@ -183,11 +217,11 @@ button {
 
 .nav-multiselect__trigger {
   width: 100%;
-  padding: 0 16px;
+  padding: 0 14px;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
@@ -218,7 +252,7 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .nav-multiselect__options {
@@ -251,7 +285,7 @@ button {
 }
 
 .nav-confirm-button {
-  padding: 0 18px;
+  padding: 0 14px;
   font-weight: 700;
   background: #102027;
   color: #fdf7ed;
@@ -261,9 +295,9 @@ button {
 .watch-pill {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   max-width: 100%;
-  padding: 8px 10px 8px 14px;
+  padding: 6px 8px 6px 12px;
   border-radius: 999px;
   border: 1px solid rgba(16, 32, 39, 0.1);
   background: rgba(255, 255, 255, 0.86);
@@ -271,8 +305,9 @@ button {
 
 .watch-pill__content {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
+  line-height: 1.15;
 }
 
 .watch-pill__content strong,
@@ -289,8 +324,8 @@ button {
 }
 
 .watch-pill__remove {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 999px;
   background: rgba(16, 32, 39, 0.08);
@@ -304,13 +339,13 @@ button {
 
 .stop-selector--compact .search-input {
   border-radius: 999px;
-  padding: 12px 16px;
+  padding: 9px 14px;
   background: rgba(255, 255, 255, 0.88);
 }
 
 .stop-selector--compact .ghost-button {
   border-radius: 999px;
-  padding: 11px 14px;
+  padding: 9px 12px;
   background: rgba(255, 255, 255, 0.82);
 }
 
@@ -362,12 +397,12 @@ button {
 .search-box {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 10px;
+  gap: 8px;
 }
 
 .search-input {
   width: 100%;
-  padding: 14px 16px;
+  padding: 11px 14px;
   border-radius: 16px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.9);
@@ -385,7 +420,7 @@ button {
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: 14px;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
@@ -706,7 +741,6 @@ button {
 }
 
 @media (max-width: 1180px) {
-  .app-navbar__main,
   .app-navbar__controls,
   .app-navbar__validated {
     justify-content: flex-start;
@@ -715,7 +749,23 @@ button {
 
 @media (max-width: 760px) {
   .app-navbar {
-    padding: 12px 14px 10px;
+    display: grid;
+    padding: 10px 14px 8px;
+    gap: 6px;
+  }
+
+  .app-navbar__burger {
+    display: inline-flex;
+  }
+
+  .app-navbar__panel {
+    display: none;
+    padding-top: 6px;
+  }
+
+  .app-navbar__panel--open {
+    display: grid;
+    gap: 8px;
   }
 
   .app-navbar__controls,
@@ -739,7 +789,8 @@ button {
   }
 
   .app-navbar__main {
-    gap: 10px;
+    gap: 8px;
+    justify-content: space-between;
   }
 
   .search-box {
@@ -756,5 +807,9 @@ button {
 
   .line-diagram-layout {
     grid-template-columns: 1fr;
+  }
+
+  .combined-diagram--desktop-only {
+    display: none;
   }
 }

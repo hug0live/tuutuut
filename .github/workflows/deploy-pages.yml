@@ -38,7 +38,6 @@ jobs:
       - name: Build application
         env:
           VITE_DATA_SOURCE: tcl
-          VITE_TCL_REALTIME_PROVIDER: bus-tracker
         run: npm run build
 
       - name: Upload Pages artifact

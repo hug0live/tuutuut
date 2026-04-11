@@ -366,7 +366,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
             lineStops,
             vehicles: cachedValue?.vehicles ?? [],
             updatedAt: cachedValue?.updatedAt ?? null,
-            errorMessage: error instanceof Error ? error.message : "Temps reel indisponible."
+            errorMessage: error instanceof Error ? error.message : "Temps réel indisponible."
           };
         }
       })
@@ -388,7 +388,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
         (rejectedResult && rejectedResult.status === "rejected"
           ? rejectedResult.reason instanceof Error
             ? rejectedResult.reason.message
-            : "Temps reel indisponible."
+            : "Temps réel indisponible."
           : null),
       updatedAt: getLatestUpdatedAt(successfulLines.map((selectionLine) => selectionLine.updatedAt))
     });
@@ -559,6 +559,32 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     [selection.lines]
   );
 
+  const fallbackBadge = useMemo(() => {
+    if (lineBadges.length === 0) {
+      return null;
+    }
+
+    if (lineBadges.length === 1) {
+      return {
+        label: lineBadges[0]?.shortName ?? "",
+        color: lineBadges[0]?.color ?? "#0b7a75",
+        textColor: lineBadges[0]?.textColor ?? "#ffffff"
+      };
+    }
+
+    const firstBadge = lineBadges[0];
+
+    if (!firstBadge) {
+      return null;
+    }
+
+    return {
+      label: `${firstBadge.shortName} +${lineBadges.length - 1}`,
+      color: firstBadge.color,
+      textColor: firstBadge.textColor
+    };
+  }, [lineBadges]);
+
   const positionedVehicles = useMemo(() => {
     const vehicleStyleById = new Map<string, CombinedVehicleStyle>();
     const displayedStopIds = new Set(displayedCanonicalStops.map((stop) => stop.stopId));
@@ -636,28 +662,26 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     return arrivals[0] ?? null;
   }, [state.lines]);
 
+  let diagramContent: JSX.Element;
+
   if (state.loading && state.lines.length === 0) {
-    return (
-      <article className="card combined-diagram combined-diagram--loading">
+    diagramContent = (
+      <article className="card combined-diagram combined-diagram--loading combined-diagram--desktop-only">
         <LoadingState
           title={selection.stop.name}
           message="Construction du schema fusionne..."
         />
       </article>
     );
-  }
-
-  if (state.error && state.lines.length === 0) {
-    return (
-      <article className="card combined-diagram">
+  } else if (state.error && state.lines.length === 0) {
+    diagramContent = (
+      <article className="card combined-diagram combined-diagram--desktop-only">
         <ErrorState title={selection.stop.name} message={state.error} />
       </article>
     );
-  }
-
-  return (
-    <section className="line-diagram-layout">
-      <article className="card combined-diagram">
+  } else {
+    diagramContent = (
+      <article className="card combined-diagram combined-diagram--desktop-only">
         <header className="line-diagram__header">
           <div className="line-diagram__title-group">
             <div className="combined-diagram__badge-list">
@@ -686,7 +710,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
         </header>
 
         {state.error ? (
-          <div className="inline-warning">Temps reel partiellement indisponible, certaines donnees peuvent manquer.</div>
+          <div className="inline-warning">Temps réel partiellement indisponible, certaines données peuvent manquer.</div>
         ) : null}
 
         <div className="line-diagram__svg-frame">
@@ -740,6 +764,12 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           </svg>
         </div>
       </article>
+    );
+  }
+
+  return (
+    <section className="line-diagram-layout">
+      {diagramContent}
 
       <NextArrivalCard
         stopName={selection.stop.name}
@@ -754,7 +784,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                 color: nextArrival.lineColor,
                 textColor: nextArrival.textColor
               }
-            : null
+            : fallbackBadge
         }
       />
     </section>

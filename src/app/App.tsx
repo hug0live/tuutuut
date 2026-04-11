@@ -95,6 +95,7 @@ function getLinesCountLabel(lineCount: number): string {
 export function App(): JSX.Element {
   const { nonBlockingError, setNonBlockingError } = useAppStore();
   const [watchSelections, setWatchSelections] = useState<WatchSelection[]>(loadWatchSelections);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [draftStop, setDraftStop] = useState<Stop | null>(null);
   const [draftDirectionKey, setDraftDirectionKey] = useState<string>("");
@@ -167,6 +168,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     window.localStorage.setItem(WATCH_SELECTIONS_STORAGE_KEY, JSON.stringify(watchSelections));
+  }, [watchSelections]);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
   }, [watchSelections]);
 
   const handleStopSelect = (stop: Stop): void => {
@@ -271,7 +276,26 @@ export function App(): JSX.Element {
         <nav className="app-navbar" aria-label="Navigation principale">
           <div className="app-navbar__main app-navbar__main--inline">
             <div className="app-brand">TuuTuut</div>
+            <button
+              type="button"
+              className="app-navbar__burger"
+              aria-label={isMobileMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+              aria-expanded={isMobileMenuOpen}
+              aria-controls="mobile-navbar-panel"
+              onClick={() => {
+                setIsMobileMenuOpen((currentValue) => !currentValue);
+              }}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+          </div>
 
+          <div
+            id="mobile-navbar-panel"
+            className={`app-navbar__panel${isMobileMenuOpen ? " app-navbar__panel--open" : ""}`}
+          >
             <div className="app-navbar__controls">
               <div className="app-navbar__search">
                 <StopSelector
@@ -359,11 +383,11 @@ export function App(): JSX.Element {
                 </article>
               ))}
             </div>
-          </div>
 
-          {nonBlockingError ? (
-            <ErrorState title="Information" message={nonBlockingError} compact />
-          ) : null}
+            {nonBlockingError ? (
+              <ErrorState title="Information" message={nonBlockingError} compact />
+            ) : null}
+          </div>
         </nav>
       </header>
 

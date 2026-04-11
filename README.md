@@ -22,8 +22,6 @@ Le fichier `.env.example` documente les variables utiles.
 
 - sans configuration, l'application tourne en mode `mock`
 - le projet local est deja configure en `.env.local` pour utiliser le temps reel via `Bus Tracker`
-- pour activer le flux officiel TCL a la place, il faut configurer un proxy local ou serveur sur `/api/tcl/realtime`
-- en dev, `vite.config.ts` peut proxifier automatiquement le flux officiel si `TCL_REALTIME_URL` et les credentials sont presents dans l'environnement shell
 
 ## Build de verification
 
@@ -37,7 +35,7 @@ Le repo `hug0live/tuutuut` peut maintenant se publier automatiquement sur GitHub
 
 - le build GitHub Pages detecte automatiquement le sous-chemin du repo et sort les assets sous `/tuutuut/`
 - le workflow publie sur chaque push vers `main`
-- le build Pages force `VITE_DATA_SOURCE=tcl` et `VITE_TCL_REALTIME_PROVIDER=bus-tracker`
+- le build Pages force `VITE_DATA_SOURCE=tcl`
 - aucun secret n'est necessaire pour ce mode, car `bus-tracker.fr` est appele directement depuis le navigateur
 
 Activation une seule fois dans GitHub :
@@ -49,12 +47,11 @@ Activation une seule fois dans GitHub :
 Pour tester localement le meme contexte que GitHub Pages :
 
 ```bash
-VITE_BASE_PATH=/tuutuut/ VITE_DATA_SOURCE=tcl VITE_TCL_REALTIME_PROVIDER=bus-tracker npm run build
+VITE_BASE_PATH=/tuutuut/ VITE_DATA_SOURCE=tcl npm run build
 ```
 
 Important :
 
-- le mode `official` TCL ne convient pas a GitHub Pages seul, car il demande un proxy ou backend pour proteger les credentials
 - le mode local par defaut reste `mock`, afin de garder un demarrage sans dependance externe
 
 ## Fonctionnalites
@@ -129,8 +126,7 @@ VITE_DATA_SOURCE=tcl npm run dev
 Dans ce mode :
 
 - la recherche d'arrets, les lignes et les schemas de ligne restent bases sur le catalogue GTFS local reel
-- les positions vehicules sont lues par defaut depuis l'API publique `bus-tracker.fr`
-- une option officielle SIRI Lite existe aussi via `VITE_TCL_REALTIME_PROVIDER=official` et `VITE_TCL_REALTIME_PROXY_PATH`
+- les positions vehicules sont lues depuis l'API publique `bus-tracker.fr`
 - si la source choisie est indisponible, l'UI reste stable et affiche `Temps reel indisponible`
 
 ## Points de branchement TCL reels
@@ -149,7 +145,6 @@ Le fichier `src/services/api/adapters/tclAdapter.ts` branche maintenant :
 
 - la topologie statique depuis le catalogue GTFS local reel
 - le flux public Bus Tracker pour les positions vehicules temps reel sans credentials
-- le flux `VehicleMonitoring` SIRI Lite officiel en option
 - une projection GPS -> segment de ligne quand les references d'arrets ne suffisent pas
 
 Il reste volontairement un TODO sur `getRealtimePassages`, qui utilise encore le fallback mock tant que le `StopMonitoring` reel n'est pas raccorde.
@@ -160,7 +155,6 @@ Par defaut dans ce repo local :
 
 ```bash
 VITE_DATA_SOURCE=tcl
-VITE_TCL_REALTIME_PROVIDER=bus-tracker
 ```
 
 Ce mode fournit :
@@ -168,40 +162,6 @@ Ce mode fournit :
 - de vraies positions GPS temps reel pour les vehicules TCL
 - sans credentials supplementaires
 - avec `access-control-allow-origin: *` sur l'API publique Bus Tracker, donc appel direct depuis le frontend
-
-## Mode temps reel TCL officiel
-
-Etat verifie le 30 mars 2026 :
-
-- la fiche officielle du jeu de donnees Grand Lyon/TCL annonce un flux vehicules temps reel en standard SIRI
-- le portail `transport.data.gouv.fr` indique que le producteur demande une authentification pour acceder a ces donnees
-- le projet ne met donc jamais les credentials dans le bundle frontend
-
-Configuration type en local :
-
-```bash
-cp .env.example .env.local
-```
-
-Puis definir dans ton shell ou dans `.env.local` :
-
-```bash
-VITE_DATA_SOURCE=tcl
-VITE_TCL_REALTIME_PROVIDER=official
-VITE_TCL_REALTIME_PROXY_PATH=/api/tcl/realtime
-TCL_REALTIME_URL=https://data.grandlyon.com/siri-lite/2.0/vehicle-monitoring.json
-TCL_REALTIME_AUTH_HEADER=Basic <base64 credentials>
-```
-
-Exemple pour fabriquer le header Basic :
-
-```bash
-printf '%s' 'identifiant:motdepasse' | base64
-```
-
-Le resultat se colle ensuite apres `Basic ` dans `TCL_REALTIME_AUTH_HEADER`.
-
-En developpement, `vite.config.ts` intercepte `/api/tcl/realtime` et relaie la requete vers la source officielle avec les credentials cote serveur. En production, il faut exposer le meme chemin via un reverse proxy ou un petit backend.
 
 ## Notes de conception
 
@@ -217,4 +177,4 @@ En developpement, `vite.config.ts` intercepte `/api/tcl/realtime` et relaie la r
 2. selection arret -> lignes
 3. rendu horizontal SVG
 4. vehicules dynamiques
-5. architecture prete pour une integration TCL reelle
+5. architecture prete pour une integration temps reel ciblee Bus Tracker

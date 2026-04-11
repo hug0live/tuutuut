@@ -53,7 +53,7 @@ function getCaption(
   }
 
   if (!arrival) {
-    return error ? "Temps reel indisponible pour le prochain passage." : "Aucun bus visible pour cet arret.";
+    return error ? "Temps réel indisponible pour le prochain passage." : "Aucun bus visible pour cet arrêt.";
   }
 
   return `Prevu a ${formatExpectedTime(arrival.expectedAt)}`;
