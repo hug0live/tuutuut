@@ -270,7 +270,7 @@ export function App(): JSX.Element {
       <header className="app-topbar">
         <nav className="app-navbar" aria-label="Navigation principale">
           <div className="app-navbar__main app-navbar__main--inline">
-            <div className="app-brand">tuutuut</div>
+            <div className="app-brand">TuuTuut</div>
 
             <div className="app-navbar__controls">
               <div className="app-navbar__search">
