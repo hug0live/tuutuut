@@ -58,6 +58,7 @@ const initialState: CombinedStopDiagramState = {
   error: null,
   updatedAt: null
 };
+const TERMINAL_STOPPED_VISIBILITY_MS = 6_000;
 
 function normalizeStopKey(value: string): string {
   return value
@@ -231,6 +232,68 @@ function buildCanonicalStops(lines: LoadedSelectionLine[]): {
   };
 }
 
+function getTerminalCanonicalKey(
+  lines: LoadedSelectionLine[],
+  stopIdToCanonicalKey: Map<string, string>,
+  selectedStopName: string
+): string | null {
+  const terminalKeys = lines
+    .map((selectionLine) => selectionLine.lineStops.at(-1)?.stopId)
+    .filter((stopId): stopId is string => Boolean(stopId))
+    .map((stopId) => stopIdToCanonicalKey.get(stopId) ?? stopId);
+
+  if (terminalKeys.length === 0) {
+    return null;
+  }
+
+  const exactNameKey = terminalKeys.find((key) => key === normalizeStopKey(selectedStopName));
+
+  if (exactNameKey) {
+    return exactNameKey;
+  }
+
+  const occurrenceByKey = new Map<string, number>();
+
+  terminalKeys.forEach((key) => {
+    occurrenceByKey.set(key, (occurrenceByKey.get(key) ?? 0) + 1);
+  });
+
+  return [...occurrenceByKey.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+}
+
+function trimCanonicalStopsAtTerminal(lineStops: LineStop[], terminalCanonicalKey: string | null): LineStop[] {
+  if (!terminalCanonicalKey) {
+    return lineStops;
+  }
+
+  const terminalIndex = lineStops.findIndex((stop) => stop.stopId === terminalCanonicalKey);
+
+  if (terminalIndex < 0) {
+    return lineStops;
+  }
+
+  return lineStops.slice(0, terminalIndex + 1);
+}
+
+function isRecentlyStoppedAtTerminal(
+  vehicle: VehiclePosition,
+  mappedPreviousStopId: string | undefined,
+  terminalCanonicalKey: string | null,
+  nowMs: number
+): boolean {
+  if (mappedPreviousStopId !== terminalCanonicalKey || vehicle.status !== "STOPPED") {
+    return false;
+  }
+
+  const vehicleTimestampMs = Date.parse(vehicle.timestamp);
+
+  if (!Number.isFinite(vehicleTimestampMs)) {
+    return true;
+  }
+
+  return nowMs - vehicleTimestampMs <= TERMINAL_STOPPED_VISIBILITY_MS;
+}
+
 function getLatestUpdatedAt(timestamps: Array<string | null | undefined>): string | null {
   const normalizedTimestamps = timestamps.filter((timestamp): timestamp is string => Boolean(timestamp));
 
@@ -243,6 +306,7 @@ function getLatestUpdatedAt(timestamps: Array<string | null | undefined>): strin
 
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
   const [state, setState] = useState<CombinedStopDiagramState>(initialState);
+  const [expiredTerminalVehicleIds, setExpiredTerminalVehicleIds] = useState<Set<string>>(() => new Set());
   const hasFetchedOnce = useRef(false);
 
   const fetchSelection = useCallback(async () => {
@@ -397,7 +461,92 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
   });
 
   const canonical = useMemo(() => buildCanonicalStops(state.lines), [state.lines]);
-  const projection = useMemo(() => projectLineStops(canonical.lineStops), [canonical.lineStops]);
+  const terminalCanonicalKey = useMemo(
+    () => getTerminalCanonicalKey(state.lines, canonical.stopIdToCanonicalKey, selection.stop.name),
+    [canonical.stopIdToCanonicalKey, selection.stop.name, state.lines]
+  );
+  const displayedCanonicalStops = useMemo(
+    () => trimCanonicalStopsAtTerminal(canonical.lineStops, terminalCanonicalKey),
+    [canonical.lineStops, terminalCanonicalKey]
+  );
+  const projection = useMemo(() => projectLineStops(displayedCanonicalStops), [displayedCanonicalStops]);
+
+  useEffect(() => {
+    const activeVehicleIds = new Set<string>();
+    const timeoutIds: number[] = [];
+
+    state.lines.forEach((selectionLine) => {
+      selectionLine.vehicles.forEach((vehicle) => {
+        const renderVehicleId = `${selectionLine.line.id}:${vehicle.vehicleId}`;
+        const mappedPreviousStopId = vehicle.stopIdPrevious
+          ? canonical.stopIdToCanonicalKey.get(vehicle.stopIdPrevious) ?? vehicle.stopIdPrevious
+          : undefined;
+
+        if (mappedPreviousStopId !== terminalCanonicalKey || vehicle.status !== "STOPPED") {
+          return;
+        }
+
+        activeVehicleIds.add(renderVehicleId);
+
+        const vehicleTimestampMs = Date.parse(vehicle.timestamp);
+
+        if (!Number.isFinite(vehicleTimestampMs)) {
+          return;
+        }
+
+        const remainingMs = TERMINAL_STOPPED_VISIBILITY_MS - (Date.now() - vehicleTimestampMs);
+
+        if (remainingMs <= 0) {
+          setExpiredTerminalVehicleIds((currentIds) => {
+            if (currentIds.has(renderVehicleId)) {
+              return currentIds;
+            }
+
+            const nextIds = new Set(currentIds);
+            nextIds.add(renderVehicleId);
+            return nextIds;
+          });
+          return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+          setExpiredTerminalVehicleIds((currentIds) => {
+            if (currentIds.has(renderVehicleId)) {
+              return currentIds;
+            }
+
+            const nextIds = new Set(currentIds);
+            nextIds.add(renderVehicleId);
+            return nextIds;
+          });
+        }, remainingMs);
+
+        timeoutIds.push(timeoutId);
+      });
+    });
+
+    setExpiredTerminalVehicleIds((currentIds) => {
+      const nextIds = new Set(
+        [...currentIds].filter((vehicleId) => {
+          if (!activeVehicleIds.has(vehicleId)) {
+            return false;
+          }
+
+          return true;
+        })
+      );
+
+      return nextIds.size === currentIds.size && [...nextIds].every((vehicleId) => currentIds.has(vehicleId))
+        ? currentIds
+        : nextIds;
+    });
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
+      });
+    };
+  }, [canonical.stopIdToCanonicalKey, state.lines, terminalCanonicalKey]);
 
   const lineBadges = useMemo(
     () =>
@@ -412,6 +561,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
   const positionedVehicles = useMemo(() => {
     const vehicleStyleById = new Map<string, CombinedVehicleStyle>();
+    const displayedStopIds = new Set(displayedCanonicalStops.map((stop) => stop.stopId));
     const mergedVehicles = state.lines.flatMap((selectionLine) => {
       const lineColor = selectionLine.line.color ?? "#0b7a75";
       const textColor = selectionLine.line.textColor ?? "#ffffff";
@@ -430,13 +580,30 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           ? canonical.stopIdToCanonicalKey.get(vehicle.stopIdNext) ?? vehicle.stopIdNext
           : undefined;
 
+        const isApproachingDisplayedStop = Boolean(mappedNextStopId && displayedStopIds.has(mappedNextStopId));
+        const isStoppedAtTerminal =
+          isRecentlyStoppedAtTerminal(vehicle, mappedPreviousStopId, terminalCanonicalKey, Date.now()) &&
+          !expiredTerminalVehicleIds.has(renderVehicleId);
+        const isWithinDisplayedSegment = Boolean(
+          (mappedPreviousStopId && displayedStopIds.has(mappedPreviousStopId)) ||
+            (mappedNextStopId && displayedStopIds.has(mappedNextStopId))
+        );
+
+        if (!isStoppedAtTerminal && !isApproachingDisplayedStop && !isWithinDisplayedSegment) {
+          return null;
+        }
+
+        if (mappedPreviousStopId === terminalCanonicalKey && mappedNextStopId === undefined && vehicle.status !== "STOPPED") {
+          return null;
+        }
+
         return {
           ...vehicle,
           vehicleId: renderVehicleId,
           ...(mappedPreviousStopId ? { stopIdPrevious: mappedPreviousStopId } : {}),
           ...(mappedNextStopId ? { stopIdNext: mappedNextStopId } : {})
         };
-      });
+      }).filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
     });
 
     return positionVehicles(mergedVehicles, projection).map((vehicle) => ({
@@ -444,7 +611,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       lineColor: vehicleStyleById.get(vehicle.vehicleId)?.lineColor ?? "#0b7a75",
       textColor: vehicleStyleById.get(vehicle.vehicleId)?.textColor ?? "#ffffff"
     }));
-  }, [canonical.stopIdToCanonicalKey, projection, state.lines]);
+  }, [canonical.stopIdToCanonicalKey, displayedCanonicalStops, expiredTerminalVehicleIds, projection, state.lines, terminalCanonicalKey]);
 
   const nextArrival = useMemo<CombinedNextArrival | null>(() => {
     const nowMs = Date.now();
