@@ -56,7 +56,7 @@ function getCaption(
     return error ? "Temps réel indisponible pour le prochain passage." : "Aucun bus visible pour cet arrêt.";
   }
 
-  return `Prevu a ${formatExpectedTime(arrival.expectedAt)}`;
+  return `Prévu à ${formatExpectedTime(arrival.expectedAt)}`;
 }
 
 export function NextArrivalCard({
@@ -88,7 +88,7 @@ export function NextArrivalCard({
 
       <strong className="next-arrival-card__value">{formatEtaValue(arrival, loading, error)}</strong>
       <p className="next-arrival-card__caption">{getCaption(arrival, loading, error)}</p>
-      <p className="next-arrival-card__stop">a {stopName}</p>
+      <p className="next-arrival-card__stop">à {stopName}</p>
     </aside>
   );
 }

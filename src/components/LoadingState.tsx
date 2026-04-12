@@ -6,7 +6,7 @@ type LoadingStateProps = {
 
 export function LoadingState({
   title = "Chargement en cours",
-  message = "Preparation des donnees du dashboard...",
+  message = "Préparation des données du dashboard...",
   compact = false
 }: LoadingStateProps): JSX.Element {
   return (

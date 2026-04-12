@@ -1,13 +1,11 @@
 import type {
   AdapterSourceInfo,
-  DataSourceMode,
   Line,
   LineStop,
   RealtimePassage,
   Stop,
   VehiclePosition
 } from "../../domain/types";
-import { mockAdapter } from "./adapters/mockAdapter";
 import { tclAdapter } from "./adapters/tclAdapter";
 
 export interface TransportAdapter {
@@ -29,12 +27,8 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   return (await response.json()) as T;
 }
 
-function resolveMode(): DataSourceMode {
-  return import.meta.env.VITE_DATA_SOURCE === "tcl" ? "tcl" : "mock";
-}
-
-export function getTransportAdapter(mode = resolveMode()): TransportAdapter {
-  return mode === "tcl" ? tclAdapter : mockAdapter;
+export function getTransportAdapter(): TransportAdapter {
+  return tclAdapter;
 }
 
 export const tclClient = getTransportAdapter();

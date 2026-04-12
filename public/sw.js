@@ -49,7 +49,7 @@ async function handleNavigationRequest(request) {
 
     return new Response("Hors ligne", {
       status: 503,
-      statusText: "Offline",
+      statusText: "Hors ligne",
       headers: {
         "Content-Type": "text/plain; charset=utf-8"
       }

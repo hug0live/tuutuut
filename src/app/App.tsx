@@ -350,9 +350,9 @@ export function App(): JSX.Element {
                     disabled={!canConfirmDraft}
                     title={
                       canConfirmDraft
-                        ? "Valider cet arret"
+                        ? "Valider cet arrêt"
                         : watchSelections.length >= MAX_WATCH_SELECTIONS && !canUpdateExistingSelection
-                          ? "Deux arrets sont deja valides"
+                          ? "Deux arrêts sont déjà validés"
                           : "Choisissez une direction et au moins une ligne"
                     }
                   >

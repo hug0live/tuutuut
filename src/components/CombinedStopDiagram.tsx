@@ -669,7 +669,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       <article className="card combined-diagram combined-diagram--loading combined-diagram--desktop-only">
         <LoadingState
           title={selection.stop.name}
-          message="Construction du schema fusionne..."
+          message="Construction du schéma fusionné..."
         />
       </article>
     );
@@ -705,7 +705,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           </div>
 
           <div className="line-diagram__meta">
-            <span>Mise a jour {formatTime(state.updatedAt)}</span>
+            <span>Mise à jour {formatTime(state.updatedAt)}</span>
           </div>
         </header>
 
@@ -715,8 +715,8 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
         <div className="line-diagram__svg-frame">
           <svg className="line-diagram__svg" viewBox={`0 0 ${projection.width} ${projection.height}`} role="img">
-            <title>{`Schema fusionne pour ${selection.stop.name} vers ${selection.directionName}`}</title>
-            <desc>{`Plusieurs lignes TCL sont projetees sur un seul axe horizontal.`}</desc>
+            <title>{`Schéma fusionné pour ${selection.stop.name} vers ${selection.directionName}`}</title>
+            <desc>{`Plusieurs lignes TCL sont projetées sur un seul axe horizontal.`}</desc>
 
             <line
               className="diagram-rail"
@@ -758,7 +758,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
             {!state.loading && positionedVehicles.length === 0 ? (
               <text className="diagram-empty" x={projection.width / 2} y="48">
-                Aucun vehicule visible en ce moment
+                Aucun véhicule visible en ce moment
               </text>
             ) : null}
           </svg>

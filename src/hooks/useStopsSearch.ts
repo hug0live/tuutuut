@@ -47,7 +47,7 @@ export function useStopsSearch(query: string): StopsSearchState {
         setState({
           stops: [],
           loading: false,
-          error: error instanceof Error ? error.message : "Impossible de charger les arrets."
+          error: error instanceof Error ? error.message : "Impossible de charger les arrêts."
         });
       });
 

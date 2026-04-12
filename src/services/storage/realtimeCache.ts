@@ -168,7 +168,7 @@ export async function writePersistedRealtimeVehicles(record: {
 
     await transactionToPromise(transaction);
   } catch {
-    // Le cache persistant est un bonus; on ignore les erreurs de stockage.
+    // Le cache persistant est un bonus ; on ignore les erreurs de stockage.
   }
 }
 
@@ -184,6 +184,6 @@ export async function deletePersistedRealtimeVehicles(cacheKey: string): Promise
     transaction.objectStore(STORE_NAME).delete(cacheKey);
     await transactionToPromise(transaction);
   } catch {
-    // Rien a faire ici non plus.
+    // Rien à faire ici non plus.
   }
 }

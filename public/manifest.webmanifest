@@ -1,7 +1,7 @@
 {
   "name": "TuuTuut",
   "short_name": "TuuTuut",
-  "description": "Dashboard TCL temps reel pour suivre des lignes de bus comme une vraie webapp.",
+  "description": "Dashboard TCL temps réel pour suivre des lignes de bus comme une vraie web app.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",

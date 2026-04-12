@@ -1,38 +1,22 @@
 import type { TransportAdapter } from "../tclClient";
 import type {
   Line,
-  LineDirection,
   LineStop,
   RealtimePassage,
   Stop,
   VehiclePosition,
   VehicleStatus
 } from "../../../domain/types";
-import { mockAdapter } from "./mockAdapter";
-
-type CatalogStop = {
-  id: string;
-  name: string;
-  lat: number | null;
-  lon: number | null;
-};
-
-type CatalogLine = {
-  id: string;
-  shortName: string;
-  longName: string;
-  directions: LineDirection[];
-};
-
-type Catalog = {
-  stops: CatalogStop[];
-  lines: CatalogLine[];
-};
-
-type CatalogRuntime = {
-  stopById: Map<string, CatalogStop>;
-  lineById: Map<string, CatalogLine>;
-};
+import {
+  type CatalogLine,
+  getCatalogLineStops,
+  getCatalogLinesByStop,
+  loadCatalog,
+  normalizeCatalogText,
+  resolveStopIds,
+  searchCatalogStops
+} from "../catalogData";
+import type { CatalogRuntime } from "../catalogData";
 
 type ProjectedVehicleSegment = {
   stopIdPrevious?: string;
@@ -91,13 +75,11 @@ type VehicleDirectionSnapshot = {
   timestampMs: number;
 };
 
-const catalogUrl = new URL("../../../mocks/tclBusCatalog.json", import.meta.url).href;
 const busTrackerApiBaseUrl = normalizeBusTrackerApiBaseUrl(import.meta.env.VITE_BUS_TRACKER_PROXY_PATH);
 const busTrackerNetworkId = 91;
 const orderedStopsCache = new Map<string, Promise<LineStop[]>>();
 const busTrackerLineCache = new Map<string, Promise<BusTrackerLine | null>>();
 const vehicleDirectionSnapshots = new Map<string, VehicleDirectionSnapshot>();
-let catalogPromise: Promise<CatalogRuntime> | null = null;
 let busTrackerNetworkPromise: Promise<BusTrackerNetwork> | null = null;
 
 function normalizeBusTrackerApiBaseUrl(value: string | undefined): string {
@@ -115,11 +97,7 @@ function normalizeBusTrackerLineRef(value: string): string {
 }
 
 function normalizeText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
+  return normalizeCatalogText(value);
 }
 
 function normalizeIdentifier(value: string): string {
@@ -146,36 +124,15 @@ async function loadOrderedLineStops(
     return cachedValue;
   }
 
-  const pendingValue = mockAdapter.getLineStops(lineId, directionId, anchorStopId);
+  const pendingValue = getCatalogLineStops(lineId, directionId, anchorStopId);
   orderedStopsCache.set(cacheKey, pendingValue);
   return pendingValue;
 }
 
-async function loadCatalogRuntime(): Promise<CatalogRuntime> {
-  if (catalogPromise) {
-    return catalogPromise;
-  }
-
-  catalogPromise = fetch(catalogUrl)
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} while loading local TCL catalog`);
-      }
-
-      return (await response.json()) as Catalog;
-    })
-    .then((catalog) => ({
-      stopById: new Map(catalog.stops.map((stop) => [stop.id, stop])),
-      lineById: new Map(catalog.lines.map((line) => [line.id, line]))
-    }));
-
-  return catalogPromise;
-}
-
-function getCoordinatePoint(stopById: Map<string, CatalogStop>, stopId: string): CoordinatePoint | null {
+function getCoordinatePoint(stopById: Map<string, Stop>, stopId: string): CoordinatePoint | null {
   const stop = stopById.get(stopId);
 
-  if (!stop || stop.lat === null || stop.lon === null) {
+  if (!stop || stop.lat === undefined || stop.lon === undefined) {
     return null;
   }
 
@@ -199,7 +156,7 @@ function toCartesian(point: CoordinatePoint, referenceLat: number): { x: number;
 function projectGpsToLine(
   location: CoordinatePoint,
   lineStops: LineStop[],
-  stopById: Map<string, CatalogStop>
+  stopById: Map<string, Stop>
 ): ProjectedVehicleSegment | null {
   const referenceLat = location.lat;
   const projectedLocation = toCartesian(location, referenceLat);
@@ -365,7 +322,7 @@ function buildVehicleFromBusTrackerVehicle(
   vehicle: BusTrackerVehicle,
   lineId: string,
   lineStops: LineStop[],
-  stopById: Map<string, CatalogStop>
+  stopById: Map<string, Stop>
 ): VehiclePosition | null {
   const position = vehicle.activity?.position;
 
@@ -411,9 +368,9 @@ function buildVehicleFromBusTrackerVehicle(
 }
 
 async function fetchBusTrackerRealtimeVehicles(
-  line: CatalogLine,
+  line: CatalogRuntime["lines"][number],
   lineStops: LineStop[],
-  stopById: Map<string, CatalogStop>
+  stopById: CatalogRuntime["stopById"]
 ): Promise<VehiclePosition[]> {
   const busTrackerLine = await resolveBusTrackerLine(line);
 
@@ -482,6 +439,79 @@ function filterVehiclesAtOrBeforeAnchor(
   });
 }
 
+function buildRealtimePassageFromVehicle(
+  vehicle: VehiclePosition,
+  lineStops: LineStop[],
+  targetStopIds: Set<string>,
+  nowMs: number
+): RealtimePassage | null {
+  const relevantStopIds = lineStops.map((stop) => stop.stopId);
+  const currentIndex = vehicle.stopIdPrevious ? relevantStopIds.indexOf(vehicle.stopIdPrevious) : -1;
+  const nextIndex = vehicle.stopIdNext ? relevantStopIds.indexOf(vehicle.stopIdNext) : -1;
+
+  if (vehicle.stopIdPrevious && targetStopIds.has(vehicle.stopIdPrevious) && vehicle.status === "STOPPED") {
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId: vehicle.stopIdPrevious,
+      expectedAt: new Date(nowMs).toISOString(),
+      minutesAway: 0,
+      status: "DUE",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  if (currentIndex < 0 || nextIndex <= currentIndex) {
+    return null;
+  }
+
+  let estimatedSeconds = 0;
+
+  for (let index = currentIndex + 1; index <= nextIndex; index += 1) {
+    const traversedSegmentSeconds = index === nextIndex && vehicle.progressBetweenStops !== undefined
+      ? Math.max(0, Math.round((1 - clamp(vehicle.progressBetweenStops, 0, 1)) * 45))
+      : 45;
+    estimatedSeconds += traversedSegmentSeconds;
+
+    const stopId = relevantStopIds[index];
+
+    if (!stopId || !targetStopIds.has(stopId)) {
+      continue;
+    }
+
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId,
+      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
+      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
+      status: estimatedSeconds < 45 ? "DUE" : "APPROACHING",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  for (let index = nextIndex + 1; index < relevantStopIds.length; index += 1) {
+    estimatedSeconds += 45;
+    const stopId = relevantStopIds[index];
+
+    if (!stopId || !targetStopIds.has(stopId)) {
+      continue;
+    }
+
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId,
+      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
+      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
+      status: "SCHEDULED",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  return null;
+}
+
 export const tclAdapter: TransportAdapter = {
   source: {
     mode: "tcl",
@@ -492,11 +522,11 @@ export const tclAdapter: TransportAdapter = {
   },
 
   async searchStops(query: string): Promise<Stop[]> {
-    return mockAdapter.searchStops(query);
+    return searchCatalogStops(query);
   },
 
   async getLinesByStop(stopId: string): Promise<Line[]> {
-    return mockAdapter.getLinesByStop(stopId);
+    return getCatalogLinesByStop(stopId);
   },
 
   async getLineStops(lineId: string, directionId?: string, anchorStopId?: string): Promise<LineStop[]> {
@@ -509,7 +539,7 @@ export const tclAdapter: TransportAdapter = {
     anchorStopId?: string
   ): Promise<VehiclePosition[]> {
     const [{ lineById, stopById }, fullLineStops, displayedLineStops] = await Promise.all([
-      loadCatalogRuntime(),
+      loadCatalog(),
       loadOrderedLineStops(lineId, directionId),
       loadOrderedLineStops(lineId, directionId, anchorStopId)
     ]);
@@ -524,7 +554,39 @@ export const tclAdapter: TransportAdapter = {
   },
 
   async getRealtimePassages(stopId: string, lineIds?: string[]): Promise<RealtimePassage[]> {
-    // Les passages restent estimes localement a partir du catalogue, Bus Tracker n'expose ici que les vehicules.
-    return mockAdapter.getRealtimePassages(stopId, lineIds);
+    const runtime = await loadCatalog();
+    const targetStopIds = new Set(resolveStopIds(runtime, stopId));
+    const candidateLines = (lineIds ?? [])
+      .map((lineId) => runtime.lineById.get(lineId))
+      .filter((line): line is CatalogRuntime["lines"][number] => Boolean(line));
+    const relevantLines =
+      candidateLines.length > 0
+        ? candidateLines
+        : runtime.lines.filter((line) =>
+            line.patterns.some((pattern) => pattern.stopIds.some((patternStopId) => targetStopIds.has(patternStopId)))
+          );
+    const nowMs = Date.now();
+    const passages = await Promise.all(
+      relevantLines.map(async (line) => {
+        const directionIds = [...new Set(line.patterns.map((pattern) => pattern.directionId))];
+        const linePassages = await Promise.all(
+          directionIds.map(async (directionId) => {
+            const lineStops = await loadOrderedLineStops(line.id, directionId);
+            const vehicles = await tclAdapter.getRealtimeVehicles(line.id, directionId);
+
+            return vehicles
+              .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, nowMs))
+              .filter((passage): passage is RealtimePassage => passage !== null);
+          })
+        );
+
+        return linePassages.flat();
+      })
+    );
+
+    return passages
+      .flat()
+      .sort((left, right) => left.expectedAt.localeCompare(right.expectedAt))
+      .slice(0, 16);
   }
 };

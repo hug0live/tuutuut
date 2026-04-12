@@ -10,10 +10,10 @@ export function Dashboard({ selections }: DashboardProps): JSX.Element {
     return (
       <section className="card dashboard-empty">
         <span className="section-kicker">Dashboard</span>
-        <h2>Validez un arret dans la navbar</h2>
+        <h2>Validez un arrêt dans la barre de navigation</h2>
         <p>
-          Recherchez un arret, choisissez une direction, cochez une ou plusieurs lignes, puis
-          validez avec OK. Vous pouvez suivre jusqu&apos;a 2 arrets.
+          Recherchez un arrêt, choisissez une direction, cochez une ou plusieurs lignes, puis
+          validez avec OK. Vous pouvez suivre jusqu&apos;à 2 arrêts.
         </p>
       </section>
     );

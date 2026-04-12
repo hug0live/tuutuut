@@ -70,7 +70,7 @@ export type RealtimePassage = {
   status: RealtimePassageStatus;
 };
 
-export type DataSourceMode = "mock" | "tcl";
+export type DataSourceMode = "tcl";
 
 export type AdapterSourceInfo = {
   mode: DataSourceMode;

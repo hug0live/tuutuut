@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 GTFS_PATH = Path(os.environ.get("TCL_GTFS_ZIP", "/tmp/lyon_tcl_gtfs.zip"))
-OUTPUT_PATH = Path(__file__).resolve().parents[1] / "src" / "mocks" / "tclBusCatalog.json"
+OUTPUT_PATH = Path(__file__).resolve().parents[1] / "src" / "tclBusCatalog.json"
 BUS_ROUTE_TYPES = {"3", "11"}
 
 

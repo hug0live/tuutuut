@@ -30,7 +30,7 @@ export function StopSelector({
   return (
     <section className="stop-selector stop-selector--compact">
       <label className="sr-only" htmlFor="stop-search-input">
-        Rechercher un arret
+        Rechercher un arrêt
       </label>
 
       <div className="search-box search-box--compact">
@@ -42,7 +42,7 @@ export function StopSelector({
           onChange={(event) => {
             onQueryChange(event.target.value);
           }}
-          placeholder="Rechercher un arret TCL"
+          placeholder="Rechercher un arrêt TCL"
           autoComplete="off"
         />
 
@@ -54,12 +54,12 @@ export function StopSelector({
       </div>
 
       {error ? <ErrorState title="Recherche indisponible" message={error} compact /> : null}
-      {loading ? <LoadingState title="Recherche" message="Mise a jour des arrets..." compact /> : null}
+      {loading ? <LoadingState title="Recherche" message="Mise à jour des arrêts..." compact /> : null}
 
       {!loading && !error && shouldShowResults ? (
         <div className="results-popover">
           {results.length === 0 ? (
-            <p className="field-empty field-empty--compact">Aucun arret correspondant.</p>
+            <p className="field-empty field-empty--compact">Aucun arrêt correspondant.</p>
           ) : (
             <ul className="results-list">
               {results.map((stop) => {
@@ -75,7 +75,7 @@ export function StopSelector({
                       }}
                     >
                       <span className="result-button__title">{stop.name}</span>
-                      <span className="result-button__meta">Arret TCL</span>
+                      <span className="result-button__meta">Arrêt TCL</span>
                     </button>
                   </li>
                 );
