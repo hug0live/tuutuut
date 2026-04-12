@@ -929,7 +929,27 @@ button {
   }
 
   .line-diagram-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .line-diagram-layout > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .next-arrival-card {
+    padding: 16px 14px 18px;
+    gap: 8px;
+  }
+
+  .next-arrival-card__topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .next-arrival-card__value {
+    font-size: clamp(1.7rem, 8vw, 2.2rem);
   }
 
   .combined-diagram--desktop-only {
