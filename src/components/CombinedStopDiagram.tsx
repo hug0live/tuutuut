@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { estimateNextArrival, type EstimatedArrival } from "../domain/arrivalEstimation";
+import { estimateArrivals, type EstimatedArrival } from "../domain/arrivalEstimation";
 import { projectLineStops } from "../domain/lineProjection";
 import { positionVehicles } from "../domain/vehiclePositioning";
-import type { LineStop, VehiclePosition, WatchSelection } from "../domain/types";
+import type { LineStop, RealtimePassage, VehiclePosition, WatchSelection } from "../domain/types";
 import { usePolling } from "../hooks/usePolling";
 import { dataSourceInfo, tclClient } from "../services/api/tclClient";
 import {
@@ -39,6 +39,7 @@ type CombinedNextArrival = EstimatedArrival & {
 
 type CombinedStopDiagramState = {
   lines: LoadedSelectionLine[];
+  passages: RealtimePassage[];
   loading: boolean;
   error: string | null;
   updatedAt: string | null;
@@ -54,6 +55,7 @@ type CanonicalStopNode = {
 
 const initialState: CombinedStopDiagramState = {
   lines: [],
+  passages: [],
   loading: false,
   error: null,
   updatedAt: null
@@ -304,6 +306,26 @@ function getLatestUpdatedAt(timestamps: Array<string | null | undefined>): strin
   return normalizedTimestamps.sort((left, right) => left.localeCompare(right)).at(-1) ?? null;
 }
 
+function toEstimatedArrival(passage: RealtimePassage, nowMs: number): EstimatedArrival | null {
+  const expectedAtMs = Date.parse(passage.expectedAt);
+
+  if (!Number.isFinite(expectedAtMs)) {
+    return null;
+  }
+
+  const secondsAway = Math.max(0, Math.round((expectedAtMs - nowMs) / 1000));
+
+  return {
+    vehicleId: passage.vehicleId,
+    lineId: passage.lineId,
+    secondsAway,
+    minutesAway: Math.max(0, Math.round(secondsAway / 60)),
+    expectedAt: new Date(expectedAtMs).toISOString(),
+    status: passage.status,
+    ...(passage.sourceType ? { sourceType: passage.sourceType } : {})
+  };
+}
+
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
   const [state, setState] = useState<CombinedStopDiagramState>(initialState);
   const [expiredTerminalVehicleIds, setExpiredTerminalVehicleIds] = useState<Set<string>>(() => new Set());
@@ -375,6 +397,22 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     const successfulLines = settledResults.flatMap((result) =>
       result.status === "fulfilled" ? [result.value] : []
     );
+    let passages: RealtimePassage[] = [];
+
+    try {
+      passages = await tclClient.getRealtimePassages(
+        selection.stop.id,
+        selection.lines.map((selectionLine) => ({
+          lineId: selectionLine.line.id,
+          directionId: selectionLine.direction.id,
+          directionName: selectionLine.direction.name,
+          anchorStopId: selection.stop.id
+        }))
+      );
+    } catch {
+      passages = [];
+    }
+
     const rejectedResult = settledResults.find((result) => result.status === "rejected");
     const lineLevelErrorMessage =
       successfulLines.find((selectionLine) => selectionLine.errorMessage)?.errorMessage ?? null;
@@ -382,6 +420,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     hasFetchedOnce.current = true;
     setState({
       lines: successfulLines.map(({ errorMessage, ...selectionLine }) => selectionLine),
+      passages,
       loading: false,
       error:
         lineLevelErrorMessage ??
@@ -441,6 +480,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
         hasFetchedOnce.current = true;
         setState({
           lines: cachedLines,
+          passages: [],
           loading: false,
           error: null,
           updatedAt: hydratedUpdatedAt
@@ -639,28 +679,67 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     }));
   }, [canonical.stopIdToCanonicalKey, displayedCanonicalStops, expiredTerminalVehicleIds, projection, state.lines, terminalCanonicalKey]);
 
-  const nextArrival = useMemo<CombinedNextArrival | null>(() => {
+  const arrivalCandidates = useMemo<CombinedNextArrival[]>(() => {
     const nowMs = Date.now();
-    const arrivals = state.lines
-      .map((selectionLine) => {
-        const arrival = estimateNextArrival(selectionLine.lineStops, selectionLine.vehicles, nowMs);
+    const arrivalsFromPassages = state.passages
+      .flatMap((passage) => {
+        const selectionLine = selection.lines.find(
+          (candidate) =>
+            candidate.line.id === passage.lineId &&
+            (!passage.directionId || candidate.direction.id === passage.directionId)
+        );
 
-        if (!arrival) {
-          return null;
+        if (!selectionLine) {
+          return [];
         }
 
-        return {
+        const estimatedArrival = toEstimatedArrival(passage, nowMs);
+
+        if (!estimatedArrival) {
+          return [];
+        }
+
+        return [
+          {
+            ...estimatedArrival,
+            lineShortName: selectionLine.line.shortName,
+            lineColor: selectionLine.line.color ?? "#0b7a75",
+            textColor: selectionLine.line.textColor ?? "#ffffff"
+          }
+        ];
+      })
+      .sort((left, right) => left.secondsAway - right.secondsAway);
+    const fallbackArrivals = state.lines
+      .map((selectionLine) => {
+        return estimateArrivals(selectionLine.lineStops, selectionLine.vehicles, nowMs).map((arrival) => ({
           ...arrival,
           lineShortName: selectionLine.line.shortName,
           lineColor: selectionLine.line.color ?? "#0b7a75",
           textColor: selectionLine.line.textColor ?? "#ffffff"
-        };
+        }));
       })
-      .filter((arrival): arrival is CombinedNextArrival => arrival !== null)
+      .flat()
       .sort((left, right) => left.secondsAway - right.secondsAway);
+    const combinedArrivals = [...arrivalsFromPassages];
+    const seenArrivalKeys = new Set(
+      arrivalsFromPassages.map((arrival) => `${arrival.lineId}:${arrival.vehicleId}:${arrival.expectedAt}`)
+    );
 
-    return arrivals[0] ?? null;
-  }, [state.lines]);
+    fallbackArrivals.forEach((arrival) => {
+      const arrivalKey = `${arrival.lineId}:${arrival.vehicleId}:${arrival.expectedAt}`;
+
+      if (seenArrivalKeys.has(arrivalKey)) {
+        return;
+      }
+
+      seenArrivalKeys.add(arrivalKey);
+      combinedArrivals.push(arrival);
+    });
+
+    return combinedArrivals.sort((left, right) => left.secondsAway - right.secondsAway);
+  }, [selection.lines, state.lines, state.passages]);
+  const nextArrival = arrivalCandidates[0] ?? null;
+  const followingArrival = arrivalCandidates[1] ?? null;
 
   let diagramContent: JSX.Element;
 
@@ -772,6 +851,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       {diagramContent}
 
       <NextArrivalCard
+        title="Prochain bus"
         stopName={selection.stop.name}
         arrival={nextArrival}
         loading={state.loading}
@@ -783,6 +863,27 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                 label: nextArrival.lineShortName,
                 color: nextArrival.lineColor,
                 textColor: nextArrival.textColor
+              }
+          : fallbackBadge
+        }
+      />
+
+      <NextArrivalCard
+        title="Bus suivant"
+        stopName={selection.stop.name}
+        arrival={followingArrival}
+        loading={state.loading}
+        error={state.error}
+        standalone
+        loadingMessage="Recherche du bus suivant..."
+        emptyMessage="Aucun autre bus visible pour cet arrêt."
+        unavailableMessage="Temps réel indisponible pour le bus suivant."
+        badge={
+          followingArrival
+            ? {
+                label: followingArrival.lineShortName,
+                color: followingArrival.lineColor,
+                textColor: followingArrival.textColor
               }
             : fallbackBadge
         }

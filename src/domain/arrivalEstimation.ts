@@ -7,6 +7,7 @@ export type EstimatedArrival = {
   minutesAway: number;
   expectedAt: string;
   status: RealtimePassageStatus;
+  sourceType?: "REALTIME" | "THEORETICAL";
 };
 
 const DEFAULT_SEGMENT_SECONDS = 90;
@@ -87,8 +88,18 @@ export function estimateNextArrival(
   vehicles: VehiclePosition[],
   nowMs = Date.now()
 ): EstimatedArrival | null {
-  const arrivals = vehicles
-    .map((vehicle) => {
+  const arrivals = estimateArrivals(lineStops, vehicles, nowMs);
+
+  return arrivals[0] ?? null;
+}
+
+export function estimateArrivals(
+  lineStops: LineStop[],
+  vehicles: VehiclePosition[],
+  nowMs = Date.now()
+): EstimatedArrival[] {
+  return vehicles
+    .map((vehicle): EstimatedArrival | null => {
       const secondsAway = estimateVehicleArrivalSeconds(vehicle, lineStops);
 
       if (secondsAway === null) {
@@ -101,11 +112,10 @@ export function estimateNextArrival(
         secondsAway,
         minutesAway: Math.max(0, Math.round(secondsAway / 60)),
         expectedAt: new Date(nowMs + secondsAway * 1000).toISOString(),
-        status: getArrivalStatus(secondsAway)
+        status: getArrivalStatus(secondsAway),
+        sourceType: "REALTIME"
       };
     })
     .filter((arrival): arrival is EstimatedArrival => arrival !== null)
     .sort((left, right) => left.secondsAway - right.secondsAway);
-
-  return arrivals[0] ?? null;
 }

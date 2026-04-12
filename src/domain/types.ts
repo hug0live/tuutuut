@@ -68,6 +68,7 @@ export type RealtimePassage = {
   expectedAt: string;
   minutesAway: number;
   status: RealtimePassageStatus;
+  sourceType?: "REALTIME" | "THEORETICAL";
 };
 
 export type DataSourceMode = "tcl";

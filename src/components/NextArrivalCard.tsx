@@ -7,12 +7,16 @@ type ArrivalBadge = {
 };
 
 type NextArrivalCardProps = {
+  title?: string;
   stopName: string;
   arrival: EstimatedArrival | null;
   loading?: boolean;
   error?: string | null;
   badge?: ArrivalBadge | null;
   standalone?: boolean;
+  loadingMessage?: string;
+  emptyMessage?: string;
+  unavailableMessage?: string;
 };
 
 function formatEtaValue(arrival: EstimatedArrival | null, loading: boolean, error: string | null | undefined): string {
@@ -43,36 +47,80 @@ function formatExpectedTime(timestamp: string): string {
   }).format(new Date(timestamp));
 }
 
+function getArrivalSourceLabel(arrival: EstimatedArrival | null): string | null {
+  if (!arrival?.sourceType) {
+    return null;
+  }
+
+  return arrival.sourceType === "REALTIME" ? "Temps réel" : "Théorique";
+}
+
 function getCaption(
   arrival: EstimatedArrival | null,
   loading: boolean,
-  error: string | null | undefined
+  error: string | null | undefined,
+  loadingMessage: string,
+  emptyMessage: string,
+  unavailableMessage: string
 ): string {
   if (loading && !arrival) {
-    return "Recherche du prochain passage...";
+    return loadingMessage;
   }
 
   if (!arrival) {
-    return error ? "Temps réel indisponible pour le prochain passage." : "Aucun bus visible pour cet arrêt.";
+    return error ? unavailableMessage : emptyMessage;
+  }
+
+  if (arrival.sourceType === "THEORETICAL") {
+    return `Horaire théorique officiel à ${formatExpectedTime(arrival.expectedAt)}`;
   }
 
   return `Prévu à ${formatExpectedTime(arrival.expectedAt)}`;
 }
 
 export function NextArrivalCard({
+  title = "Prochain bus",
   stopName,
   arrival,
   loading = false,
   error = null,
   badge = null,
-  standalone = false
+  standalone = false,
+  loadingMessage = "Recherche du prochain passage...",
+  emptyMessage = "Aucun bus visible pour cet arrêt.",
+  unavailableMessage = "Temps réel indisponible pour le prochain passage."
 }: NextArrivalCardProps): JSX.Element {
+  const arrivalSourceLabel = getArrivalSourceLabel(arrival);
+  const isRealtime = arrival?.sourceType === "REALTIME";
+  const isTheoretical = arrival?.sourceType === "THEORETICAL";
+
   return (
     <aside
-      className={`next-arrival-card${standalone ? " next-arrival-card--standalone card" : ""}`}
+      className={`next-arrival-card${standalone ? " next-arrival-card--standalone card" : ""}${
+        isTheoretical ? " next-arrival-card--theoretical" : ""
+      }`}
       aria-live="polite"
     >
-      <span className="next-arrival-card__eyebrow">Prochain bus</span>
+      <div className="next-arrival-card__topbar">
+        <span className="next-arrival-card__eyebrow">{title}</span>
+
+        {arrivalSourceLabel ? (
+          <span
+            className={`next-arrival-card__source${isRealtime ? " next-arrival-card__source--realtime" : ""}`}
+            aria-label={arrivalSourceLabel}
+            title={arrivalSourceLabel}
+          >
+            {isRealtime ? (
+              <span className="next-arrival-card__realtime-icon" aria-hidden="true">
+                <span className="next-arrival-card__realtime-dot" />
+                <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--inner" />
+                <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--outer" />
+              </span>
+            ) : null}
+            <span>{arrivalSourceLabel}</span>
+          </span>
+        ) : null}
+      </div>
 
       {badge ? (
         <span
@@ -87,7 +135,9 @@ export function NextArrivalCard({
       ) : null}
 
       <strong className="next-arrival-card__value">{formatEtaValue(arrival, loading, error)}</strong>
-      <p className="next-arrival-card__caption">{getCaption(arrival, loading, error)}</p>
+      <p className="next-arrival-card__caption">
+        {getCaption(arrival, loading, error, loadingMessage, emptyMessage, unavailableMessage)}
+      </p>
       <p className="next-arrival-card__stop">à {stopName}</p>
     </aside>
   );

@@ -20,6 +20,12 @@ class TripRecord:
     route_id: str
     direction_id: str
     headsign: str
+    service_id: str
+
+
+def parse_gtfs_time_to_seconds(value: str) -> int:
+    hours, minutes, seconds = (int(part) for part in value.split(":", 2))
+    return hours * 3600 + minutes * 60 + seconds
 
 
 def iter_csv_rows(archive: zipfile.ZipFile, filename: str):
@@ -51,9 +57,11 @@ def main() -> int:
                 route_id=route_id,
                 direction_id=row.get("direction_id", "0") or "0",
                 headsign=row.get("trip_headsign", "").strip() or f"Direction {row.get('direction_id', '0') or '0'}",
+                service_id=row["service_id"],
             )
 
         trip_stop_sequences: dict[str, list[tuple[int, str]]] = defaultdict(list)
+        theoretical_schedule_by_key: dict[tuple[str, str, str, str], list[int]] = defaultdict(list)
 
         for row in iter_csv_rows(archive, "stop_times.txt"):
             trip_id = row["trip_id"]
@@ -61,7 +69,17 @@ def main() -> int:
             if trip_id not in trips:
                 continue
 
+            trip = trips[trip_id]
             trip_stop_sequences[trip_id].append((int(row["stop_sequence"]), row["stop_id"]))
+
+            departure_time = row.get("departure_time") or row.get("arrival_time")
+
+            if not departure_time:
+                continue
+
+            theoretical_schedule_by_key[
+                (trip.route_id, trip.direction_id, row["stop_id"], trip.service_id)
+            ].append(parse_gtfs_time_to_seconds(departure_time))
 
         pattern_counter: Counter[tuple[str, str, str, tuple[str, ...]]] = Counter()
         direction_name_counter: Counter[tuple[str, str, str]] = Counter()
@@ -97,6 +115,7 @@ def main() -> int:
 
         lines: list[dict[str, object]] = []
         patterns_by_route: dict[str, list[dict[str, object]]] = defaultdict(list)
+        used_service_ids = {service_id for _, _, _, service_id in theoretical_schedule_by_key.keys()}
 
         for (route_id, direction_id, headsign, stop_ids), trip_count in pattern_counter.items():
             pattern_signature = f"{headsign}|{';'.join(stop_ids)}"
@@ -162,6 +181,60 @@ def main() -> int:
                 }
             )
 
+        services: list[dict[str, object]] = []
+        service_index_by_id: dict[str, int] = {}
+
+        for row in iter_csv_rows(archive, "calendar.txt"):
+            service_id = row["service_id"]
+
+            if service_id not in used_service_ids:
+                continue
+
+            service_index_by_id[service_id] = len(services)
+            services.append(
+                {
+                    "id": service_id,
+                    "days": "".join(
+                        [
+                            row["monday"],
+                            row["tuesday"],
+                            row["wednesday"],
+                            row["thursday"],
+                            row["friday"],
+                            row["saturday"],
+                            row["sunday"],
+                        ]
+                    ),
+                    "startDate": row["start_date"],
+                    "endDate": row["end_date"],
+                }
+            )
+
+        exceptions: dict[str, dict[str, list[int]]] = defaultdict(lambda: {"add": [], "remove": []})
+
+        for row in iter_csv_rows(archive, "calendar_dates.txt"):
+            service_id = row["service_id"]
+
+            if service_id not in service_index_by_id:
+                continue
+
+            service_index = service_index_by_id[service_id]
+            exception_bucket = "add" if row["exception_type"] == "1" else "remove"
+            exceptions[row["date"]][exception_bucket].append(service_index)
+
+        stop_schedules: dict[str, list[list[object]]] = defaultdict(list)
+
+        for (route_id, direction_id, stop_id, service_id), departures in theoretical_schedule_by_key.items():
+            service_index = service_index_by_id.get(service_id)
+
+            if service_index is None:
+                continue
+
+            schedule_key = f"{route_id}|{direction_id}|{stop_id}"
+            stop_schedules[schedule_key].append(
+                [service_index, sorted(set(departures))]
+            )
+
     catalog = {
         "source": {
             "type": "official_gtfs_snapshot",
@@ -170,6 +243,11 @@ def main() -> int:
         },
         "stops": sorted(stops.values(), key=lambda stop: (str(stop["name"]).lower(), str(stop["id"]))),
         "lines": lines,
+        "theoreticalTimetables": {
+            "services": services,
+            "exceptions": exceptions,
+            "stopSchedules": stop_schedules,
+        },
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +257,7 @@ def main() -> int:
     print(f"Stops: {len(catalog['stops'])}")
     print(f"Lines: {len(catalog['lines'])}")
     print(f"Patterns: {sum(len(line['patterns']) for line in catalog['lines'])}")
+    print(f"Theoretical timetable keys: {len(stop_schedules)}")
     return 0
 
 

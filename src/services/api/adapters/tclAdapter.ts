@@ -1,4 +1,4 @@
-import type { TransportAdapter } from "../tclClient";
+import type { RealtimePassageRequest, TransportAdapter } from "../tclClient";
 import type {
   Line,
   LineStop,
@@ -9,6 +9,8 @@ import type {
 } from "../../../domain/types";
 import {
   type CatalogLine,
+  type TheoreticalService,
+  type TheoreticalTimetables,
   getCatalogLineStops,
   getCatalogLinesByStop,
   loadCatalog,
@@ -321,6 +323,7 @@ async function resolveBusTrackerLine(line: CatalogLine): Promise<BusTrackerLine 
 function buildVehicleFromBusTrackerVehicle(
   vehicle: BusTrackerVehicle,
   lineId: string,
+  directionId: string | undefined,
   lineStops: LineStop[],
   stopById: Map<string, Stop>
 ): VehiclePosition | null {
@@ -357,6 +360,7 @@ function buildVehicleFromBusTrackerVehicle(
   return {
     vehicleId: String(vehicle.id),
     lineId,
+    ...(directionId ? { directionId } : {}),
     ...(projectedSegment.stopIdPrevious ? { stopIdPrevious: projectedSegment.stopIdPrevious } : {}),
     ...(projectedSegment.stopIdNext ? { stopIdNext: projectedSegment.stopIdNext } : {}),
     ...(projectedSegment.progressBetweenStops !== undefined
@@ -369,6 +373,7 @@ function buildVehicleFromBusTrackerVehicle(
 
 async function fetchBusTrackerRealtimeVehicles(
   line: CatalogRuntime["lines"][number],
+  directionId: string | undefined,
   lineStops: LineStop[],
   stopById: CatalogRuntime["stopById"]
 ): Promise<VehiclePosition[]> {
@@ -381,7 +386,7 @@ async function fetchBusTrackerRealtimeVehicles(
   const vehicles = await fetchBusTrackerJson<BusTrackerVehicle[]>(`lines/${busTrackerLine.id}/online-vehicles`);
 
   return vehicles
-    .map((vehicle) => buildVehicleFromBusTrackerVehicle(vehicle, line.id, lineStops, stopById))
+    .map((vehicle) => buildVehicleFromBusTrackerVehicle(vehicle, line.id, directionId, lineStops, stopById))
     .filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
 }
 
@@ -512,6 +517,183 @@ function buildRealtimePassageFromVehicle(
   return null;
 }
 
+function mapPassageTypeToStatus(sourceType: "REALTIME" | "THEORETICAL", expectedAt: string, nowMs: number): RealtimePassage["status"] {
+  const secondsAway = Math.max(0, Math.round((Date.parse(expectedAt) - nowMs) / 1000));
+
+  if (secondsAway <= 45) {
+    return "DUE";
+  }
+
+  if (sourceType === "REALTIME" || secondsAway <= 180) {
+    return "APPROACHING";
+  }
+
+  return "SCHEDULED";
+}
+
+function formatLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+function getWeekdayIndex(date: Date): number {
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
+}
+
+function isServiceActive(
+  service: TheoreticalService,
+  dateKey: string,
+  weekdayIndex: number,
+  timetables: TheoreticalTimetables
+): boolean {
+  const dayExceptions = timetables.exceptions[dateKey];
+  const serviceIndex = timetables.services.findIndex((candidate) => candidate.id === service.id);
+
+  if (serviceIndex >= 0) {
+    if (dayExceptions?.remove.includes(serviceIndex)) {
+      return false;
+    }
+
+    if (dayExceptions?.add.includes(serviceIndex)) {
+      return true;
+    }
+  }
+
+  if (dateKey < service.startDate || dateKey > service.endDate) {
+    return false;
+  }
+
+  return service.days.charAt(weekdayIndex) === "1";
+}
+
+function buildDateFromSeconds(baseDate: Date, totalSeconds: number): Date {
+  const nextDate = new Date(
+    baseDate.getFullYear(),
+    baseDate.getMonth(),
+    baseDate.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+  nextDate.setSeconds(totalSeconds);
+  return nextDate;
+}
+
+function lowerBound(values: number[], target: number): number {
+  let low = 0;
+  let high = values.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const middleValue = values[middle] ?? 0;
+
+    if (middleValue < target) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
+}
+
+async function buildTheoreticalPassages(
+  stopId: string,
+  requests: RealtimePassageRequest[]
+): Promise<RealtimePassage[]> {
+  if (requests.length === 0) {
+    return [];
+  }
+
+  const runtime = await loadCatalog();
+  const timetables = runtime.theoreticalTimetables;
+
+  if (!timetables) {
+    return [];
+  }
+
+  const targetStopIds = resolveStopIds(runtime, stopId);
+  const nowMs = Date.now();
+  const nowDate = new Date(nowMs);
+  const results: RealtimePassage[] = [];
+  const seenKeys = new Set<string>();
+
+  for (let offsetDays = 0; offsetDays <= 1; offsetDays += 1) {
+    const serviceDate = new Date();
+    serviceDate.setHours(0, 0, 0, 0);
+    serviceDate.setDate(serviceDate.getDate() + offsetDays);
+    const dateKey = formatLocalDateKey(serviceDate);
+    const weekdayIndex = getWeekdayIndex(serviceDate);
+    const thresholdSeconds =
+      offsetDays === 0
+        ? nowDate.getHours() * 3600 +
+          nowDate.getMinutes() * 60 +
+          nowDate.getSeconds()
+        : 0;
+
+    requests.forEach((request) => {
+      targetStopIds.forEach((physicalStopId) => {
+        const scheduleKey = `${request.lineId}|${request.directionId ?? "0"}|${physicalStopId}`;
+        const scheduleEntries = timetables.stopSchedules[scheduleKey] ?? [];
+
+        scheduleEntries.forEach(([serviceIndex, departures]) => {
+          const service = timetables.services[serviceIndex];
+
+          if (!service || !isServiceActive(service, dateKey, weekdayIndex, timetables)) {
+            return;
+          }
+
+          const departureIndex = lowerBound(departures, thresholdSeconds);
+
+          for (
+            let index = departureIndex;
+            index < Math.min(departureIndex + 3, departures.length);
+            index += 1
+          ) {
+            const departureSeconds = departures[index];
+
+            if (departureSeconds === undefined) {
+              continue;
+            }
+
+            const departureDate = buildDateFromSeconds(serviceDate, departureSeconds);
+            const expectedAt = departureDate.toISOString();
+            const seenKey = `${request.lineId}:${request.directionId ?? ""}:${physicalStopId}:${expectedAt}`;
+
+            if (seenKeys.has(seenKey)) {
+              continue;
+            }
+
+            seenKeys.add(seenKey);
+            const secondsAway = Math.max(0, Math.round((departureDate.getTime() - nowMs) / 1000));
+
+            results.push({
+              vehicleId: `${request.lineId}:${service.id}:${departureSeconds}`,
+              lineId: request.lineId,
+              stopId,
+              ...(request.directionId ? { directionId: request.directionId } : {}),
+              expectedAt,
+              minutesAway: Math.max(0, Math.round(secondsAway / 60)),
+              status: mapPassageTypeToStatus("THEORETICAL", expectedAt, nowMs),
+              sourceType: "THEORETICAL"
+            });
+          }
+        });
+      });
+    });
+
+    if (results.length >= 16) {
+      break;
+    }
+  }
+
+  return results.sort((left, right) => left.expectedAt.localeCompare(right.expectedAt)).slice(0, 16);
+}
+
 export const tclAdapter: TransportAdapter = {
   source: {
     mode: "tcl",
@@ -549,43 +731,38 @@ export const tclAdapter: TransportAdapter = {
       return [];
     }
 
-    const vehicles = await fetchBusTrackerRealtimeVehicles(line, fullLineStops, stopById);
+    const vehicles = await fetchBusTrackerRealtimeVehicles(line, directionId, fullLineStops, stopById);
     return filterVehiclesAtOrBeforeAnchor(vehicles, fullLineStops, displayedLineStops);
   },
 
-  async getRealtimePassages(stopId: string, lineIds?: string[]): Promise<RealtimePassage[]> {
+  async getRealtimePassages(stopId: string, requests: RealtimePassageRequest[] = []): Promise<RealtimePassage[]> {
+    const theoreticalPassages = await buildTheoreticalPassages(stopId, requests);
+
     const runtime = await loadCatalog();
     const targetStopIds = new Set(resolveStopIds(runtime, stopId));
-    const candidateLines = (lineIds ?? [])
-      .map((lineId) => runtime.lineById.get(lineId))
-      .filter((line): line is CatalogRuntime["lines"][number] => Boolean(line));
-    const relevantLines =
-      candidateLines.length > 0
-        ? candidateLines
-        : runtime.lines.filter((line) =>
-            line.patterns.some((pattern) => pattern.stopIds.some((patternStopId) => targetStopIds.has(patternStopId)))
-          );
-    const nowMs = Date.now();
-    const passages = await Promise.all(
-      relevantLines.map(async (line) => {
-        const directionIds = [...new Set(line.patterns.map((pattern) => pattern.directionId))];
-        const linePassages = await Promise.all(
-          directionIds.map(async (directionId) => {
-            const lineStops = await loadOrderedLineStops(line.id, directionId);
-            const vehicles = await tclAdapter.getRealtimeVehicles(line.id, directionId);
-
-            return vehicles
-              .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, nowMs))
-              .filter((passage): passage is RealtimePassage => passage !== null);
-          })
+    const candidateRequests: RealtimePassageRequest[] = requests.length > 0
+      ? requests
+      : runtime.lines.flatMap((line) =>
+          line.directions.map<RealtimePassageRequest>((direction) => ({
+            lineId: line.id,
+            directionId: direction.id,
+            directionName: direction.name
+          }))
         );
+    const passages = await Promise.all(
+      candidateRequests.map(async (request) => {
+        const lineStops = await loadOrderedLineStops(request.lineId, request.directionId, request.anchorStopId);
+        const vehicles = await tclAdapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId);
 
-        return linePassages.flat();
+        return vehicles
+          .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, Date.now()))
+          .filter((passage): passage is RealtimePassage => passage !== null);
       })
     );
 
     return passages
       .flat()
+      .concat(theoreticalPassages)
       .sort((left, right) => left.expectedAt.localeCompare(right.expectedAt))
       .slice(0, 16);
   }

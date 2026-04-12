@@ -482,7 +482,7 @@ button {
 }
 
 .dashboard-panel {
-  width: min(1320px, 100%);
+  width: 100%;
   margin: 0 auto;
   padding-inline: clamp(18px, 3vw, 42px);
   min-width: 0;
@@ -490,7 +490,7 @@ button {
 }
 
 .app-footer {
-  width: min(1320px, 100%);
+  width: 100%;
   margin: 14px auto 0;
   padding-inline: clamp(18px, 3vw, 42px);
   display: flex;
@@ -518,7 +518,7 @@ button {
 
 .line-diagram-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
+  grid-template-columns: minmax(0, 3.4fr) minmax(220px, 1fr) minmax(220px, 1fr);
   gap: 18px;
   align-items: stretch;
 }
@@ -659,12 +659,82 @@ button {
   height: 100%;
 }
 
+.next-arrival-card__topbar {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .next-arrival-card__eyebrow {
   color: var(--muted);
   font-size: 0.7rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 700;
+}
+
+.next-arrival-card__source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.next-arrival-card__source--realtime {
+  color: var(--accent);
+}
+
+.next-arrival-card__realtime-icon {
+  position: relative;
+  width: 26px;
+  height: 20px;
+  display: inline-block;
+  filter: drop-shadow(0 0 8px rgba(11, 122, 117, 0.18));
+}
+
+.next-arrival-card__realtime-dot,
+.next-arrival-card__realtime-wave {
+  position: absolute;
+  inset: auto auto 0 50%;
+  transform: translateX(-50%);
+}
+
+.next-arrival-card__realtime-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: realtimeDotPulse 1.4s infinite ease-in-out;
+}
+
+.next-arrival-card__realtime-wave {
+  border: 3px solid currentColor;
+  border-bottom: 0;
+  border-left-color: transparent;
+  border-right-color: transparent;
+  border-top-left-radius: 999px;
+  border-top-right-radius: 999px;
+  opacity: 0.34;
+  transform: translateX(-50%) scale(0.94);
+  animation: realtimePulse 1.5s infinite ease-in-out;
+}
+
+.next-arrival-card__realtime-wave--inner {
+  width: 14px;
+  height: 8px;
+  bottom: 3px;
+}
+
+.next-arrival-card__realtime-wave--outer {
+  width: 22px;
+  height: 13px;
+  bottom: 3px;
+  animation-delay: 0.18s;
 }
 
 .next-arrival-card__badge {
@@ -682,6 +752,10 @@ button {
   font-size: clamp(2rem, 2.8vw, 3rem);
   line-height: 0.95;
   letter-spacing: -0.06em;
+}
+
+.next-arrival-card--theoretical .next-arrival-card__value {
+  color: var(--muted);
 }
 
 .next-arrival-card__caption,
@@ -755,10 +829,44 @@ button {
   }
 }
 
+@keyframes realtimePulse {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: translateX(-50%) scale(0.88);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.05);
+  }
+}
+
+@keyframes realtimeDotPulse {
+  0%,
+  100% {
+    transform: translateX(-50%) scale(0.9);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: translateX(-50%) scale(1.2);
+    opacity: 1;
+  }
+}
+
 @media (max-width: 1180px) {
   .app-navbar__controls,
   .app-navbar__validated {
     justify-content: flex-start;
+  }
+
+  .line-diagram-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
+  }
+
+  .line-diagram-layout > :first-child {
+    grid-column: 1 / -1;
   }
 }
 

@@ -34,6 +34,26 @@ type Catalog = {
   };
   stops: CatalogStop[];
   lines: CatalogLine[];
+  theoreticalTimetables?: TheoreticalTimetables;
+};
+
+export type TheoreticalService = {
+  id: string;
+  days: string;
+  startDate: string;
+  endDate: string;
+};
+
+export type TheoreticalTimetables = {
+  services: TheoreticalService[];
+  exceptions: Record<
+    string,
+    {
+      add: number[];
+      remove: number[];
+    }
+  >;
+  stopSchedules: Record<string, Array<[number, number[]]>>;
 };
 
 export type CatalogRuntime = {
@@ -42,6 +62,7 @@ export type CatalogRuntime = {
   stopById: Map<string, Stop>;
   lineById: Map<string, CatalogLine>;
   logicalStopMemberIdsById: Map<string, string[]>;
+  theoreticalTimetables: TheoreticalTimetables | null;
 };
 
 const catalogUrl = new URL("../../tclBusCatalog.json", import.meta.url).href;
@@ -175,7 +196,8 @@ export async function loadCatalog(): Promise<CatalogRuntime> {
         lines: catalog.lines,
         stopById: new Map(physicalStops.map((stop) => [stop.id, stop])),
         lineById: new Map(catalog.lines.map((line) => [line.id, line])),
-        logicalStopMemberIdsById
+        logicalStopMemberIdsById,
+        theoreticalTimetables: catalog.theoreticalTimetables ?? null
       };
     });
 

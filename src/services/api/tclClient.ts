@@ -8,13 +8,20 @@ import type {
 } from "../../domain/types";
 import { tclAdapter } from "./adapters/tclAdapter";
 
+export type RealtimePassageRequest = {
+  lineId: string;
+  directionId?: string;
+  directionName?: string;
+  anchorStopId?: string;
+};
+
 export interface TransportAdapter {
   readonly source: AdapterSourceInfo;
   searchStops(query: string): Promise<Stop[]>;
   getLinesByStop(stopId: string): Promise<Line[]>;
   getLineStops(lineId: string, directionId?: string, anchorStopId?: string): Promise<LineStop[]>;
   getRealtimeVehicles(lineId: string, directionId?: string, anchorStopId?: string): Promise<VehiclePosition[]>;
-  getRealtimePassages(stopId: string, lineIds?: string[]): Promise<RealtimePassage[]>;
+  getRealtimePassages(stopId: string, requests?: RealtimePassageRequest[]): Promise<RealtimePassage[]>;
 }
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
