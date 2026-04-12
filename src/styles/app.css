@@ -489,6 +489,21 @@ button {
   display: grid;
 }
 
+.app-footer {
+  width: min(1320px, 100%);
+  margin: 14px auto 0;
+  padding-inline: clamp(18px, 3vw, 42px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.app-footer__meta {
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.01em;
+  opacity: 0.88;
+}
+
 .dashboard-empty {
   min-height: 320px;
   padding: 32px;

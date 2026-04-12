@@ -50,12 +50,36 @@ function normalizeBusTrackerProxyPath(value: string | undefined): string {
   return trimmedValue.charAt(0) === "/" ? trimmedValue : `/${trimmedValue}`;
 }
 
+function resolveLastUpdatedAt(env: Record<string, string>): string {
+  const processEnv = getProcessEnv();
+  const candidates = [
+    processEnv.VITE_APP_LAST_UPDATED_AT,
+    env.VITE_APP_LAST_UPDATED_AT,
+    processEnv.VERCEL_GIT_COMMIT_DATE,
+    env.VERCEL_GIT_COMMIT_DATE,
+    processEnv.CI_COMMIT_TIMESTAMP,
+    env.CI_COMMIT_TIMESTAMP
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, new URL(".", import.meta.url).pathname, "");
   const busTrackerProxyPath = normalizeBusTrackerProxyPath(env.VITE_BUS_TRACKER_PROXY_PATH);
+  const lastUpdatedAt = resolveLastUpdatedAt(env);
 
   return {
     base: resolveBasePath(env),
+    define: {
+      __APP_LAST_UPDATED_AT__: JSON.stringify(lastUpdatedAt)
+    },
     plugins: [react()],
     server: {
       host: "0.0.0.0",

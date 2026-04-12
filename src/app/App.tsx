@@ -11,6 +11,20 @@ import { useAppStore } from "../store/useAppStore";
 
 const WATCH_SELECTIONS_STORAGE_KEY = "tcl-live-dashboard::watch-selections";
 const MAX_WATCH_SELECTIONS = 2;
+const appLastUpdatedAt = __APP_LAST_UPDATED_AT__;
+
+function formatLastUpdatedAt(timestamp: string): string | null {
+  const parsedTimestamp = Date.parse(timestamp);
+
+  if (!Number.isFinite(parsedTimestamp)) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(new Date(parsedTimestamp));
+}
 
 function isStop(value: unknown): value is Stop {
   if (!value || typeof value !== "object") {
@@ -103,6 +117,7 @@ export function App(): JSX.Element {
   const deferredQuery = useDeferredValue(searchQuery);
   const { stops, loading: stopsLoading, error: stopsError } = useStopsSearch(deferredQuery);
   const { lines, error: linesError } = useLinesByStop(draftStop?.id ?? null);
+  const lastUpdatedLabel = useMemo(() => formatLastUpdatedAt(appLastUpdatedAt), []);
 
   const directionOptions = useMemo(() => getDirectionOptions(lines), [lines]);
 
@@ -394,6 +409,12 @@ export function App(): JSX.Element {
       <main className="dashboard-panel">
         <Dashboard selections={watchSelections} />
       </main>
+
+      {lastUpdatedLabel ? (
+        <footer className="app-footer" aria-label="Informations de version">
+          <small className="app-footer__meta">Dernière modification : {lastUpdatedLabel}</small>
+        </footer>
+      ) : null}
     </div>
   );
 }
