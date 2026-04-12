@@ -306,7 +306,15 @@ export function App(): JSX.Element {
       <header className="app-topbar">
         <nav className="app-navbar" aria-label="Navigation principale">
           <div className="app-navbar__main app-navbar__main--inline">
-            <div className="app-brand">TuuTuut</div>
+            <div className="app-brand">
+              <img
+                className="app-brand__logo"
+                src={`${import.meta.env.BASE_URL}app-icon.svg`}
+                alt=""
+                aria-hidden="true"
+              />
+              <span>TuuTuut</span>
+            </div>
             <button
               type="button"
               className="app-navbar__burger"

@@ -102,6 +102,9 @@ button {
 }
 
 .app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: clamp(1.2rem, 1.55vw, 1.55rem);
   font-weight: 800;
   letter-spacing: -0.06em;
@@ -109,6 +112,14 @@ button {
   padding: 0 2px;
   white-space: nowrap;
   align-self: center;
+}
+
+.app-brand__logo {
+  width: 34px;
+  height: 34px;
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 10px;
 }
 
 .app-navbar__burger {
