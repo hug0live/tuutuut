@@ -4,6 +4,7 @@ import type { Line, LineDirection, Stop, WatchSelection, WatchSelectionLine } fr
 import { Dashboard } from "../components/Dashboard";
 import { ErrorState } from "../components/ErrorState";
 import { LineMultiSelectDropdown } from "../components/LineMultiSelectDropdown";
+import { LoadingState } from "../components/LoadingState";
 import { StopSelector } from "../components/StopSelector";
 import { useLinesByStop } from "../hooks/useLinesByStop";
 import { useStopsSearch } from "../hooks/useStopsSearch";
@@ -11,6 +12,7 @@ import { useAppStore } from "../store/useAppStore";
 
 const WATCH_SELECTIONS_STORAGE_KEY = "tcl-live-dashboard::watch-selections";
 const MAX_WATCH_SELECTIONS = 2;
+const APP_UPDATE_EVENT = "tuutuut:update-status";
 const appLastUpdatedAt = __APP_LAST_UPDATED_AT__;
 
 function formatLastUpdatedAt(timestamp: string): string | null {
@@ -110,6 +112,7 @@ export function App(): JSX.Element {
   const { nonBlockingError, setNonBlockingError } = useAppStore();
   const [watchSelections, setWatchSelections] = useState<WatchSelection[]>(loadWatchSelections);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [draftStop, setDraftStop] = useState<Stop | null>(null);
   const [draftDirectionKey, setDraftDirectionKey] = useState<string>("");
@@ -188,6 +191,19 @@ export function App(): JSX.Element {
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [watchSelections]);
+
+  useEffect(() => {
+    function handleUpdateStatus(event: Event): void {
+      const customEvent = event as CustomEvent<string>;
+      setUpdateStatusMessage(typeof customEvent.detail === "string" ? customEvent.detail : null);
+    }
+
+    window.addEventListener(APP_UPDATE_EVENT, handleUpdateStatus);
+
+    return () => {
+      window.removeEventListener(APP_UPDATE_EVENT, handleUpdateStatus);
+    };
+  }, []);
 
   const handleStopSelect = (stop: Stop): void => {
     setSearchQuery(stop.name);
@@ -407,6 +423,13 @@ export function App(): JSX.Element {
       </header>
 
       <main className="dashboard-panel">
+        {updateStatusMessage ? (
+          <LoadingState
+            title="Mise à jour de l'application"
+            message={updateStatusMessage}
+          />
+        ) : null}
+
         <Dashboard selections={watchSelections} />
       </main>
 

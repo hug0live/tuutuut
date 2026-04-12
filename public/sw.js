@@ -1,11 +1,30 @@
-const CACHE_NAME = "tuutuut-runtime-v1";
+const CACHE_PREFIX = "tuutuut-runtime";
+const workerUrl = new URL(self.location.href);
+const cacheVersion = workerUrl.searchParams.get("v") || "dev";
+const CACHE_NAME = `${CACHE_PREFIX}-${cacheVersion}`;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      const cacheKeys = await caches.keys();
+
+      await Promise.all(
+        cacheKeys.map((cacheKey) => {
+          if (cacheKey.startsWith(`${CACHE_PREFIX}-`) && cacheKey !== CACHE_NAME) {
+            return caches.delete(cacheKey);
+          }
+
+          return Promise.resolve(false);
+        })
+      );
+
+      await self.clients.claim();
+    })()
+  );
 });
 
 self.addEventListener("fetch", (event) => {
@@ -22,14 +41,20 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
-    event.respondWith(handleNavigationRequest(request));
+    event.respondWith(handleNetworkFirstRequest(request));
     return;
   }
 
-  event.respondWith(handleStaticRequest(request));
+  event.respondWith(
+    shouldUseNetworkFirst(requestUrl) ? handleNetworkFirstRequest(request) : handleCacheFirstRequest(request)
+  );
 });
 
-async function handleNavigationRequest(request) {
+function shouldUseNetworkFirst(requestUrl) {
+  return !requestUrl.pathname.includes("/assets/");
+}
+
+async function handleNetworkFirstRequest(request) {
   const cache = await caches.open(CACHE_NAME);
 
   try {
@@ -57,7 +82,7 @@ async function handleNavigationRequest(request) {
   }
 }
 
-async function handleStaticRequest(request) {
+async function handleCacheFirstRequest(request) {
   const cachedResponse = await caches.match(request);
 
   if (cachedResponse) {
