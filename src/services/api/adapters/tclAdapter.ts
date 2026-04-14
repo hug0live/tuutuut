@@ -267,6 +267,7 @@ function estimateVehicleDirection(snapshotKey: string, scalar: number, timestamp
 
 async function fetchBusTrackerJson<T>(path: string): Promise<T> {
   const response = await fetch(`${busTrackerApiBaseUrl}/${path}`, {
+    cache: "no-store",
     headers: {
       Accept: "application/json"
     }

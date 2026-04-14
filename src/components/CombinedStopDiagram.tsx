@@ -1031,12 +1031,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                   />
                 ))}
 
-                {!state.loading && positionedVehicles.length === 0 ? (
-                  <text className="diagram-empty" x={projection.width / 2} y="48">
-                    Aucun véhicule visible en ce moment
-                  </text>
-                ) : null}
-              </svg>
+                </svg>
             </div>
           </div>
         ) : null}

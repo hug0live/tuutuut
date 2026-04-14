@@ -22,16 +22,35 @@ export function usePolling(
       return undefined;
     }
 
-    if (immediate) {
+    const runCallback = () => {
       void savedCallback.current();
+    };
+
+    if (immediate) {
+      runCallback();
     }
 
     const intervalId = window.setInterval(() => {
-      void savedCallback.current();
+      runCallback();
     }, intervalMs);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        runCallback();
+      }
+    };
+
+    window.addEventListener("focus", runCallback);
+    window.addEventListener("online", runCallback);
+    window.addEventListener("pageshow", runCallback);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       window.clearInterval(intervalId);
+      window.removeEventListener("focus", runCallback);
+      window.removeEventListener("online", runCallback);
+      window.removeEventListener("pageshow", runCallback);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [enabled, immediate, intervalMs]);
 }
