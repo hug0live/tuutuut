@@ -347,6 +347,10 @@ function filterOverlappingTheoreticalArrivals(arrivals: CombinedNextArrival[]): 
   });
 }
 
+function buildArrivalVehicleKey(arrival: Pick<EstimatedArrival, "lineId" | "vehicleId">): string {
+  return `${arrival.lineId}:${arrival.vehicleId}`;
+}
+
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
   const [state, setState] = useState<CombinedStopDiagramState>(initialState);
   const [expiredTerminalVehicleIds, setExpiredTerminalVehicleIds] = useState<Set<string>>(() => new Set());
@@ -747,8 +751,17 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     const seenArrivalKeys = new Set(
       arrivalsFromPassages.map((arrival) => `${arrival.lineId}:${arrival.vehicleId}:${arrival.expectedAt}`)
     );
+    const seenRealtimeVehicleKeys = new Set(
+      arrivalsFromPassages
+        .filter((arrival) => arrival.sourceType === "REALTIME")
+        .map((arrival) => buildArrivalVehicleKey(arrival))
+    );
 
     fallbackArrivals.forEach((arrival) => {
+      if (arrival.sourceType === "REALTIME" && seenRealtimeVehicleKeys.has(buildArrivalVehicleKey(arrival))) {
+        return;
+      }
+
       const arrivalKey = `${arrival.lineId}:${arrival.vehicleId}:${arrival.expectedAt}`;
 
       if (seenArrivalKeys.has(arrivalKey)) {

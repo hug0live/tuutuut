@@ -5,6 +5,7 @@ import { AppStoreProvider } from "./store/useAppStore";
 import "./styles/app.css";
 
 const APP_UPDATE_EVENT = "tuutuut:update-status";
+const SERVICE_WORKER_UPDATE_INTERVAL_MS = 30_000;
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
@@ -15,6 +16,10 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     }).then((registration) => {
       let shouldReloadForUpdate = false;
       let isReloading = false;
+
+      const checkForServiceWorkerUpdate = () => {
+        void registration.update();
+      };
 
       registration.addEventListener("updatefound", () => {
         const installingWorker = registration.installing;
@@ -51,6 +56,21 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
           window.location.reload();
         }, 1200);
       });
+
+      checkForServiceWorkerUpdate();
+
+      window.setInterval(() => {
+        checkForServiceWorkerUpdate();
+      }, SERVICE_WORKER_UPDATE_INTERVAL_MS);
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          checkForServiceWorkerUpdate();
+        }
+      });
+
+      window.addEventListener("focus", checkForServiceWorkerUpdate);
+      window.addEventListener("online", checkForServiceWorkerUpdate);
     });
   });
 }
