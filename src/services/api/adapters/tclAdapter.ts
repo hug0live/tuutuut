@@ -462,6 +462,7 @@ function buildRealtimePassageFromVehicle(
       expectedAt: new Date(nowMs).toISOString(),
       minutesAway: 0,
       status: "DUE",
+      sourceType: "REALTIME",
       ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
     };
   }
@@ -491,6 +492,7 @@ function buildRealtimePassageFromVehicle(
       expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
       minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
       status: estimatedSeconds < 45 ? "DUE" : "APPROACHING",
+      sourceType: "REALTIME",
       ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
     };
   }
@@ -510,6 +512,7 @@ function buildRealtimePassageFromVehicle(
       expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
       minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
       status: "SCHEDULED",
+      sourceType: "REALTIME",
       ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
     };
   }
@@ -601,11 +604,123 @@ function lowerBound(values: number[], target: number): number {
   return low;
 }
 
+type RealtimePassageContext = {
+  request: RealtimePassageRequest;
+  fullLineStops: LineStop[];
+  visibleVehicles: VehiclePosition[];
+  realtimePassages: RealtimePassage[];
+};
+
+function getScheduleKey(lineId: string, directionId: string | undefined, stopId: string): string {
+  return `${lineId}|${directionId ?? "0"}|${stopId}`;
+}
+
+function computeMinimumScheduledTravelSeconds(
+  timetables: TheoreticalTimetables,
+  lineId: string,
+  directionId: string | undefined,
+  originStopId: string,
+  targetStopId: string,
+  serviceIndex: number
+): number | null {
+  if (originStopId === targetStopId) {
+    return 0;
+  }
+
+  const originSchedules = timetables.stopSchedules[getScheduleKey(lineId, directionId, originStopId)] ?? [];
+  const targetSchedules = timetables.stopSchedules[getScheduleKey(lineId, directionId, targetStopId)] ?? [];
+  const originDepartures = originSchedules.find(([candidateServiceIndex]) => candidateServiceIndex === serviceIndex)?.[1];
+  const targetDepartures = targetSchedules.find(([candidateServiceIndex]) => candidateServiceIndex === serviceIndex)?.[1];
+
+  if (!originDepartures || !targetDepartures || originDepartures.length === 0 || targetDepartures.length === 0) {
+    return null;
+  }
+
+  let originIndex = 0;
+  let minimumTravelSeconds: number | null = null;
+
+  for (const targetDeparture of targetDepartures) {
+    while (
+      originIndex + 1 < originDepartures.length &&
+      (originDepartures[originIndex + 1] ?? Number.POSITIVE_INFINITY) <= targetDeparture
+    ) {
+      originIndex += 1;
+    }
+
+    const originDeparture = originDepartures[originIndex];
+
+    if (originDeparture === undefined || originDeparture > targetDeparture) {
+      continue;
+    }
+
+    const travelSeconds = targetDeparture - originDeparture;
+
+    if (travelSeconds < 0) {
+      continue;
+    }
+
+    minimumTravelSeconds =
+      minimumTravelSeconds === null ? travelSeconds : Math.min(minimumTravelSeconds, travelSeconds);
+  }
+
+  return minimumTravelSeconds;
+}
+
+function isImpossibleTheoreticalPassage(
+  context: RealtimePassageContext,
+  timetables: TheoreticalTimetables,
+  physicalStopId: string,
+  serviceIndex: number,
+  secondsAway: number
+): boolean {
+  if (context.visibleVehicles.length > 0) {
+    return false;
+  }
+
+  const originStopId = context.fullLineStops[0]?.stopId;
+
+  if (!originStopId) {
+    return false;
+  }
+
+  const minimumTravelSeconds = computeMinimumScheduledTravelSeconds(
+    timetables,
+    context.request.lineId,
+    context.request.directionId,
+    originStopId,
+    physicalStopId,
+    serviceIndex
+  );
+
+  if (minimumTravelSeconds === null) {
+    return false;
+  }
+
+  // Keep a small margin because GTFS times and realtime visibility are not perfectly aligned.
+  return secondsAway + 60 < minimumTravelSeconds;
+}
+
+function getImminentVisiblePassageCount(
+  context: RealtimePassageContext,
+  physicalStopId: string,
+  minimumTravelSeconds: number,
+  nowMs: number
+): number {
+  return context.realtimePassages.filter((passage) => {
+    if (passage.stopId !== physicalStopId) {
+      return false;
+    }
+
+    const secondsAway = Math.max(0, Math.round((Date.parse(passage.expectedAt) - nowMs) / 1000));
+    return secondsAway + 60 < minimumTravelSeconds;
+  }).length;
+}
+
 async function buildTheoreticalPassages(
   stopId: string,
-  requests: RealtimePassageRequest[]
+  contexts: RealtimePassageContext[]
 ): Promise<RealtimePassage[]> {
-  if (requests.length === 0) {
+  if (contexts.length === 0) {
     return [];
   }
 
@@ -635,10 +750,11 @@ async function buildTheoreticalPassages(
           nowDate.getSeconds()
         : 0;
 
-    requests.forEach((request) => {
+    contexts.forEach((context) => {
       targetStopIds.forEach((physicalStopId) => {
-        const scheduleKey = `${request.lineId}|${request.directionId ?? "0"}|${physicalStopId}`;
+        const scheduleKey = getScheduleKey(context.request.lineId, context.request.directionId, physicalStopId);
         const scheduleEntries = timetables.stopSchedules[scheduleKey] ?? [];
+        let imminentAcceptedCount = 0;
 
         scheduleEntries.forEach(([serviceIndex, departures]) => {
           const service = timetables.services[serviceIndex];
@@ -662,7 +778,7 @@ async function buildTheoreticalPassages(
 
             const departureDate = buildDateFromSeconds(serviceDate, departureSeconds);
             const expectedAt = departureDate.toISOString();
-            const seenKey = `${request.lineId}:${request.directionId ?? ""}:${physicalStopId}:${expectedAt}`;
+            const seenKey = `${context.request.lineId}:${context.request.directionId ?? ""}:${physicalStopId}:${expectedAt}`;
 
             if (seenKeys.has(seenKey)) {
               continue;
@@ -671,11 +787,43 @@ async function buildTheoreticalPassages(
             seenKeys.add(seenKey);
             const secondsAway = Math.max(0, Math.round((departureDate.getTime() - nowMs) / 1000));
 
+            const originStopId = context.fullLineStops[0]?.stopId;
+            const minimumTravelSeconds =
+              originStopId
+                ? computeMinimumScheduledTravelSeconds(
+                    timetables,
+                    context.request.lineId,
+                    context.request.directionId,
+                    originStopId,
+                    physicalStopId,
+                    serviceIndex
+                  )
+                : null;
+
+            if (isImpossibleTheoreticalPassage(context, timetables, physicalStopId, serviceIndex, secondsAway)) {
+              continue;
+            }
+
+            if (
+              minimumTravelSeconds !== null &&
+              secondsAway + 60 < minimumTravelSeconds
+            ) {
+              const occupiedImminentSlots =
+                getImminentVisiblePassageCount(context, physicalStopId, minimumTravelSeconds, nowMs) +
+                imminentAcceptedCount;
+
+              if (occupiedImminentSlots >= context.visibleVehicles.length) {
+                continue;
+              }
+
+              imminentAcceptedCount += 1;
+            }
+
             results.push({
-              vehicleId: `${request.lineId}:${service.id}:${departureSeconds}`,
-              lineId: request.lineId,
+              vehicleId: `${context.request.lineId}:${service.id}:${departureSeconds}`,
+              lineId: context.request.lineId,
               stopId,
-              ...(request.directionId ? { directionId: request.directionId } : {}),
+              ...(context.request.directionId ? { directionId: context.request.directionId } : {}),
               expectedAt,
               minutesAway: Math.max(0, Math.round(secondsAway / 60)),
               status: mapPassageTypeToStatus("THEORETICAL", expectedAt, nowMs),
@@ -736,8 +884,6 @@ export const tclAdapter: TransportAdapter = {
   },
 
   async getRealtimePassages(stopId: string, requests: RealtimePassageRequest[] = []): Promise<RealtimePassage[]> {
-    const theoreticalPassages = await buildTheoreticalPassages(stopId, requests);
-
     const runtime = await loadCatalog();
     const targetStopIds = new Set(resolveStopIds(runtime, stopId));
     const candidateRequests: RealtimePassageRequest[] = requests.length > 0
@@ -749,19 +895,35 @@ export const tclAdapter: TransportAdapter = {
             directionName: direction.name
           }))
         );
-    const passages = await Promise.all(
+    const requestResults = await Promise.all(
       candidateRequests.map(async (request) => {
-        const lineStops = await loadOrderedLineStops(request.lineId, request.directionId, request.anchorStopId);
-        const vehicles = await tclAdapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId);
-
-        return vehicles
+        const [fullLineStops, lineStops, vehicles] = await Promise.all([
+          loadOrderedLineStops(request.lineId, request.directionId),
+          loadOrderedLineStops(request.lineId, request.directionId, request.anchorStopId),
+          tclAdapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId)
+        ]);
+        const realtimePassages = vehicles
           .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, Date.now()))
           .filter((passage): passage is RealtimePassage => passage !== null);
+
+        return {
+          context: {
+            request,
+            fullLineStops,
+            visibleVehicles: vehicles,
+            realtimePassages
+          },
+          realtimePassages
+        };
       })
     );
+    const theoreticalPassages = await buildTheoreticalPassages(
+      stopId,
+      requestResults.map((result) => result.context)
+    );
 
-    return passages
-      .flat()
+    return requestResults
+      .flatMap((result) => result.realtimePassages)
       .concat(theoreticalPassages)
       .sort((left, right) => left.expectedAt.localeCompare(right.expectedAt))
       .slice(0, 16);

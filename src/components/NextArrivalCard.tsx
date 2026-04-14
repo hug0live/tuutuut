@@ -72,7 +72,7 @@ function getCaption(
   }
 
   if (arrival.sourceType === "THEORETICAL") {
-    return `Horaire théorique officiel à ${formatExpectedTime(arrival.expectedAt)}`;
+    return `Horaire théorique à ${formatExpectedTime(arrival.expectedAt)}`;
   }
 
   return `Prévu à ${formatExpectedTime(arrival.expectedAt)}`;
@@ -98,7 +98,7 @@ export function NextArrivalCard({
     <aside
       className={`next-arrival-card${standalone ? " next-arrival-card--standalone card" : ""}${
         isTheoretical ? " next-arrival-card--theoretical" : ""
-      }`}
+      }${isRealtime ? " next-arrival-card--realtime" : ""}`}
       aria-live="polite"
     >
       <div className="next-arrival-card__topbar">
@@ -117,7 +117,6 @@ export function NextArrivalCard({
                 <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--outer" />
               </span>
             ) : null}
-            <span>{arrivalSourceLabel}</span>
           </span>
         ) : null}
       </div>

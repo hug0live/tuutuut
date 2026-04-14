@@ -61,6 +61,7 @@ const initialState: CombinedStopDiagramState = {
   updatedAt: null
 };
 const TERMINAL_STOPPED_VISIBILITY_MS = 6_000;
+const THEORETICAL_OVERLAP_WINDOW_SECONDS = 90;
 
 function normalizeStopKey(value: string): string {
   return value
@@ -324,6 +325,26 @@ function toEstimatedArrival(passage: RealtimePassage, nowMs: number): EstimatedA
     status: passage.status,
     ...(passage.sourceType ? { sourceType: passage.sourceType } : {})
   };
+}
+
+function filterOverlappingTheoreticalArrivals(arrivals: CombinedNextArrival[]): CombinedNextArrival[] {
+  return arrivals.filter((arrival) => {
+    if (arrival.sourceType !== "THEORETICAL") {
+      return true;
+    }
+
+    return !arrivals.some((candidate) => {
+      if (candidate.sourceType !== "REALTIME") {
+        return false;
+      }
+
+      if (candidate.lineId !== arrival.lineId) {
+        return false;
+      }
+
+      return Math.abs(candidate.secondsAway - arrival.secondsAway) <= THEORETICAL_OVERLAP_WINDOW_SECONDS;
+    });
+  });
 }
 
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
@@ -681,7 +702,8 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
   const arrivalCandidates = useMemo<CombinedNextArrival[]>(() => {
     const nowMs = Date.now();
-    const arrivalsFromPassages = state.passages
+    const arrivalsFromPassages = filterOverlappingTheoreticalArrivals(
+      state.passages
       .flatMap((passage) => {
         const selectionLine = selection.lines.find(
           (candidate) =>
@@ -708,7 +730,8 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           }
         ];
       })
-      .sort((left, right) => left.secondsAway - right.secondsAway);
+      .sort((left, right) => left.secondsAway - right.secondsAway)
+    );
     const fallbackArrivals = state.lines
       .map((selectionLine) => {
         return estimateArrivals(selectionLine.lineStops, selectionLine.vehicles, nowMs).map((arrival) => ({

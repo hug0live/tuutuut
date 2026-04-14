@@ -666,6 +666,11 @@ button {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
+.next-arrival-card--realtime {
+  background: rgba(255, 255, 255, 0.92);
+  animation: realtimeCardFade 3.8s infinite ease-in-out;
+}
+
 .next-arrival-card--standalone {
   height: 100%;
 }
@@ -688,12 +693,14 @@ button {
 .next-arrival-card__source {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   white-space: nowrap;
+  min-width: 40px;
+  min-height: 32px;
 }
 
 .next-arrival-card__source--realtime {
@@ -702,8 +709,8 @@ button {
 
 .next-arrival-card__realtime-icon {
   position: relative;
-  width: 26px;
-  height: 20px;
+  width: 36px;
+  height: 28px;
   display: inline-block;
   filter: drop-shadow(0 0 8px rgba(11, 122, 117, 0.18));
 }
@@ -716,8 +723,8 @@ button {
 }
 
 .next-arrival-card__realtime-dot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: currentColor;
   animation: realtimeDotPulse 1.4s infinite ease-in-out;
@@ -736,15 +743,15 @@ button {
 }
 
 .next-arrival-card__realtime-wave--inner {
-  width: 14px;
-  height: 8px;
-  bottom: 3px;
+  width: 20px;
+  height: 11px;
+  bottom: 4px;
 }
 
 .next-arrival-card__realtime-wave--outer {
-  width: 22px;
-  height: 13px;
-  bottom: 3px;
+  width: 32px;
+  height: 18px;
+  bottom: 4px;
   animation-delay: 0.18s;
 }
 
@@ -777,6 +784,38 @@ button {
 
 .next-arrival-card__caption {
   font-weight: 600;
+}
+
+@keyframes realtimeCardFade {
+  0% {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(16, 32, 39, 0.08);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      0 0 0 rgba(224, 62, 62, 0);
+  }
+
+  50% {
+    background: rgba(255, 196, 196, 0.98);
+    border-color: rgba(224, 62, 62, 0.52);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.4),
+      0 0 38px rgba(224, 62, 62, 0.2);
+  }
+
+  100% {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(16, 32, 39, 0.08);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      0 0 0 rgba(224, 62, 62, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .next-arrival-card--realtime {
+    animation: none;
+  }
 }
 
 .loading-state,
