@@ -786,6 +786,93 @@ button {
   font-weight: 600;
 }
 
+.mobile-arrivals-card {
+  display: none;
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(16, 32, 39, 0.08);
+  background:
+    radial-gradient(circle at top right, rgba(11, 122, 117, 0.16), transparent 42%),
+    rgba(255, 255, 255, 0.82);
+}
+
+.mobile-arrivals-card__header {
+  display: grid;
+  justify-items: flex-start;
+  margin-bottom: 14px;
+  gap: 10px;
+}
+
+.mobile-arrivals-card__badge {
+  min-width: 66px;
+  min-height: 42px;
+  padding: 8px 14px;
+  border-radius: 16px;
+  display: inline-grid;
+  place-items: center;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  box-shadow: 0 10px 24px rgba(16, 32, 39, 0.12);
+}
+
+.mobile-arrivals-card__stop-name {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.mobile-arrivals-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mobile-arrivals-card__diagram {
+  margin-top: 12px;
+  padding-top: 4px;
+}
+
+.mobile-arrivals-card__diagram .line-diagram__svg-frame {
+  margin-inline: 0;
+  padding-inline: 0;
+}
+
+.mobile-arrivals-card__diagram .line-diagram__svg {
+  min-width: 100%;
+}
+
+.mobile-arrivals-card__item {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(16, 32, 39, 0.06);
+}
+
+.mobile-arrivals-card__label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.mobile-arrivals-card__value {
+  display: block;
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.mobile-arrivals-card__caption {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 @keyframes realtimeCardFade {
   0% {
     background: rgba(255, 255, 255, 0.92);
@@ -915,7 +1002,7 @@ button {
     grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
   }
 
-  .line-diagram-layout > :first-child {
+  .line-diagram-layout__diagram {
     grid-column: 1 / -1;
   }
 }
@@ -979,12 +1066,12 @@ button {
   }
 
   .line-diagram-layout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 
-  .line-diagram-layout > :first-child {
-    grid-column: 1 / -1;
+  .mobile-arrivals-card {
+    display: block;
   }
 
   .next-arrival-card {
@@ -1002,7 +1089,44 @@ button {
     font-size: clamp(1.7rem, 8vw, 2.2rem);
   }
 
-  .combined-diagram--desktop-only {
+  .line-diagram-layout__desktop-arrival {
     display: none;
+  }
+
+  .combined-diagram {
+    order: 2;
+    position: relative;
+    padding: 18px 0 12px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    margin-inline: calc(50% - 50vw);
+  }
+
+  .mobile-arrivals-card {
+    order: 1;
+  }
+
+  .mobile-arrivals-card__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .combined-diagram--mobile-hidden {
+    display: none;
+  }
+
+  .combined-diagram__badge-list,
+  .line-diagram__header,
+  .combined-diagram .inline-warning {
+    display: none;
+  }
+
+  .combined-diagram .line-diagram__svg-frame {
+    margin-inline: 0;
+    padding: 0;
+  }
+
+  .combined-diagram .line-diagram__svg {
+    min-width: 100%;
   }
 }

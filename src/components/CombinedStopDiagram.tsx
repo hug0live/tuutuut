@@ -351,6 +351,56 @@ function buildArrivalVehicleKey(arrival: Pick<EstimatedArrival, "lineId" | "vehi
   return `${arrival.lineId}:${arrival.vehicleId}`;
 }
 
+function formatArrivalValue(arrival: EstimatedArrival | null, loading: boolean, error: string | null): string {
+  if (loading && !arrival) {
+    return "...";
+  }
+
+  if (!arrival) {
+    return error ? "Indispo" : "--";
+  }
+
+  if (arrival.secondsAway <= 20 || arrival.status === "DUE") {
+    return "Maint.";
+  }
+
+  if (arrival.secondsAway < 60) {
+    return `${Math.max(1, Math.round(arrival.secondsAway))} s`;
+  }
+
+  return `${Math.max(1, Math.round(arrival.secondsAway / 60))} min`;
+}
+
+function formatExpectedTime(timestamp: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(timestamp));
+}
+
+function formatArrivalCaption(
+  arrival: EstimatedArrival | null,
+  loading: boolean,
+  error: string | null,
+  loadingMessage: string,
+  emptyMessage: string,
+  unavailableMessage: string
+): string {
+  if (loading && !arrival) {
+    return loadingMessage;
+  }
+
+  if (!arrival) {
+    return error ? unavailableMessage : emptyMessage;
+  }
+
+  if (arrival.sourceType === "THEORETICAL") {
+    return `Horaire théorique à ${formatExpectedTime(arrival.expectedAt)}`;
+  }
+
+  return `Prévu à ${formatExpectedTime(arrival.expectedAt)}`;
+}
+
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
   const [state, setState] = useState<CombinedStopDiagramState>(initialState);
   const [expiredTerminalVehicleIds, setExpiredTerminalVehicleIds] = useState<Set<string>>(() => new Set());
@@ -649,6 +699,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       textColor: firstBadge.textColor
     };
   }, [lineBadges]);
+  const mobileHeaderBadge = useMemo(() => fallbackBadge, [fallbackBadge]);
 
   const positionedVehicles = useMemo(() => {
     const vehicleStyleById = new Map<string, CombinedVehicleStyle>();
@@ -776,12 +827,13 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
   }, [selection.lines, state.lines, state.passages]);
   const nextArrival = arrivalCandidates[0] ?? null;
   const followingArrival = arrivalCandidates[1] ?? null;
+  const showMobileDiagram = !(state.loading && state.lines.length === 0) && !(state.error && state.lines.length === 0);
 
   let diagramContent: JSX.Element;
 
   if (state.loading && state.lines.length === 0) {
     diagramContent = (
-      <article className="card combined-diagram combined-diagram--loading combined-diagram--desktop-only">
+      <article className="card combined-diagram line-diagram-layout__diagram combined-diagram--loading">
         <LoadingState
           title={selection.stop.name}
           message="Construction du schéma fusionné..."
@@ -790,13 +842,13 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     );
   } else if (state.error && state.lines.length === 0) {
     diagramContent = (
-      <article className="card combined-diagram combined-diagram--desktop-only">
+      <article className="card combined-diagram line-diagram-layout__diagram">
         <ErrorState title={selection.stop.name} message={state.error} />
       </article>
     );
   } else {
     diagramContent = (
-      <article className="card combined-diagram combined-diagram--desktop-only">
+      <article className="card combined-diagram line-diagram-layout__diagram combined-diagram--mobile-hidden">
         <header className="line-diagram__header">
           <div className="line-diagram__title-group">
             <div className="combined-diagram__badge-list">
@@ -884,46 +936,156 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
   return (
     <section className="line-diagram-layout">
+      <article className="card mobile-arrivals-card" aria-live="polite">
+        <div className="mobile-arrivals-card__header">
+          {mobileHeaderBadge ? (
+            <span
+              className="mobile-arrivals-card__badge"
+              style={{
+                background: mobileHeaderBadge.color,
+                color: mobileHeaderBadge.textColor
+              }}
+            >
+              {mobileHeaderBadge.label}
+            </span>
+          ) : null}
+          <p className="mobile-arrivals-card__stop-name">{selection.stop.name}</p>
+        </div>
+
+        <div className="mobile-arrivals-card__grid">
+          <section className="mobile-arrivals-card__item">
+            <span className="mobile-arrivals-card__label">Prochain bus</span>
+            <strong className="mobile-arrivals-card__value">{formatArrivalValue(nextArrival, state.loading, state.error)}</strong>
+            <p className="mobile-arrivals-card__caption">
+              {formatArrivalCaption(
+                nextArrival,
+                state.loading,
+                state.error,
+                "Recherche du prochain passage...",
+                "Aucun bus visible pour cet arrêt.",
+                "Temps réel indisponible pour le prochain passage."
+              )}
+            </p>
+          </section>
+
+          <section className="mobile-arrivals-card__item">
+            <span className="mobile-arrivals-card__label">Bus suivant</span>
+            <strong className="mobile-arrivals-card__value">
+              {formatArrivalValue(followingArrival, state.loading, state.error)}
+            </strong>
+            <p className="mobile-arrivals-card__caption">
+              {formatArrivalCaption(
+                followingArrival,
+                state.loading,
+                state.error,
+                "Recherche du bus suivant...",
+                "Aucun autre bus visible pour cet arrêt.",
+                "Temps réel indisponible pour le bus suivant."
+              )}
+            </p>
+          </section>
+        </div>
+
+        {showMobileDiagram ? (
+          <div className="mobile-arrivals-card__diagram">
+            <div className="line-diagram__svg-frame">
+              <svg className="line-diagram__svg" viewBox={`0 0 ${projection.width} ${projection.height}`} role="img">
+                <title>{`Schéma fusionné pour ${selection.stop.name} vers ${selection.directionName}`}</title>
+                <desc>{`Plusieurs lignes TCL sont projetées sur un seul axe horizontal.`}</desc>
+
+                <line
+                  className="diagram-rail"
+                  x1={projection.padding}
+                  y1={projection.lineY}
+                  x2={projection.width - projection.padding}
+                  y2={projection.lineY}
+                  stroke="rgba(16, 32, 39, 0.64)"
+                  strokeWidth="8"
+                />
+
+                <line
+                  className="diagram-rail diagram-rail--ghost"
+                  x1={projection.padding}
+                  y1={projection.lineY}
+                  x2={projection.width - projection.padding}
+                  y2={projection.lineY}
+                  stroke="rgba(255,255,255,0.72)"
+                  strokeWidth="2"
+                />
+
+                {projection.projectedStops.map((stop) => (
+                  <StopMarker
+                    key={stop.stopId}
+                    stop={stop}
+                    lineY={projection.lineY}
+                    isSelected={stop.stopName === selection.stop.name}
+                  />
+                ))}
+
+                {positionedVehicles.map((vehicle) => (
+                  <VehicleMarker
+                    key={vehicle.vehicleId}
+                    vehicle={vehicle}
+                    lineColor={vehicle.lineColor}
+                    textColor={vehicle.textColor}
+                  />
+                ))}
+
+                {!state.loading && positionedVehicles.length === 0 ? (
+                  <text className="diagram-empty" x={projection.width / 2} y="48">
+                    Aucun véhicule visible en ce moment
+                  </text>
+                ) : null}
+              </svg>
+            </div>
+          </div>
+        ) : null}
+      </article>
+
       {diagramContent}
 
-      <NextArrivalCard
-        title="Prochain bus"
-        stopName={selection.stop.name}
-        arrival={nextArrival}
-        loading={state.loading}
-        error={state.error}
-        standalone
-        badge={
-          nextArrival
-            ? {
-                label: nextArrival.lineShortName,
-                color: nextArrival.lineColor,
-                textColor: nextArrival.textColor
-              }
-          : fallbackBadge
-        }
-      />
+      <div className="line-diagram-layout__desktop-arrival">
+        <NextArrivalCard
+          title="Prochain bus"
+          stopName={selection.stop.name}
+          arrival={nextArrival}
+          loading={state.loading}
+          error={state.error}
+          standalone
+          badge={
+            nextArrival
+              ? {
+                  label: nextArrival.lineShortName,
+                  color: nextArrival.lineColor,
+                  textColor: nextArrival.textColor
+                }
+              : fallbackBadge
+          }
+        />
+      </div>
 
-      <NextArrivalCard
-        title="Bus suivant"
-        stopName={selection.stop.name}
-        arrival={followingArrival}
-        loading={state.loading}
-        error={state.error}
-        standalone
-        loadingMessage="Recherche du bus suivant..."
-        emptyMessage="Aucun autre bus visible pour cet arrêt."
-        unavailableMessage="Temps réel indisponible pour le bus suivant."
-        badge={
-          followingArrival
-            ? {
-                label: followingArrival.lineShortName,
-                color: followingArrival.lineColor,
-                textColor: followingArrival.textColor
-              }
-            : fallbackBadge
-        }
-      />
+      <div className="line-diagram-layout__desktop-arrival">
+        <NextArrivalCard
+          title="Bus suivant"
+          stopName={selection.stop.name}
+          arrival={followingArrival}
+          loading={state.loading}
+          error={state.error}
+          standalone
+          loadingMessage="Recherche du bus suivant..."
+          emptyMessage="Aucun autre bus visible pour cet arrêt."
+          unavailableMessage="Temps réel indisponible pour le bus suivant."
+          badge={
+            followingArrival
+              ? {
+                  label: followingArrival.lineShortName,
+                  color: followingArrival.lineColor,
+                  textColor: followingArrival.textColor
+                }
+              : fallbackBadge
+          }
+        />
+      </div>
     </section>
   );
 }
