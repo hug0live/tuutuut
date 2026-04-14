@@ -40,6 +40,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (shouldBypassCache(requestUrl)) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(handleNetworkFirstRequest(request));
     return;
@@ -52,6 +57,10 @@ self.addEventListener("fetch", (event) => {
 
 function shouldUseNetworkFirst(requestUrl) {
   return !requestUrl.pathname.includes("/assets/");
+}
+
+function shouldBypassCache(requestUrl) {
+  return requestUrl.pathname.startsWith("/api/");
 }
 
 async function handleNetworkFirstRequest(request) {

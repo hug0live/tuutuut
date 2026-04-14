@@ -89,8 +89,8 @@ async function openDatabase(): Promise<IDBDatabase | null> {
   return databasePromise;
 }
 
-function isFresh(record: PersistedRealtimeVehiclesRecord): boolean {
-  return Date.now() - record.cachedAt <= MAX_CACHE_AGE_MS;
+function isFresh(record: PersistedRealtimeVehiclesRecord, maxAgeMs: number): boolean {
+  return Date.now() - record.cachedAt <= maxAgeMs;
 }
 
 export function buildRealtimeVehiclesCacheKey(
@@ -103,7 +103,8 @@ export function buildRealtimeVehiclesCacheKey(
 }
 
 export async function readPersistedRealtimeVehicles(
-  cacheKey: string
+  cacheKey: string,
+  maxAgeMs = MAX_CACHE_AGE_MS
 ): Promise<PersistedRealtimeVehicles | null> {
   const database = await openDatabase();
 
@@ -122,7 +123,7 @@ export async function readPersistedRealtimeVehicles(
       return null;
     }
 
-    if (!isFresh(record)) {
+    if (!isFresh(record, maxAgeMs)) {
       void deletePersistedRealtimeVehicles(cacheKey);
       return null;
     }

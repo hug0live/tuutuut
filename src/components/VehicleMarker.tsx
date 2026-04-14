@@ -4,6 +4,7 @@ type VehicleMarkerProps = {
   vehicle: PositionedVehicle;
   lineColor: string;
   textColor: string;
+  scale?: number;
 };
 
 function getArrowPath(directionId?: string): string {
@@ -19,7 +20,8 @@ function getArrowPath(directionId?: string): string {
 export function VehicleMarker({
   vehicle,
   lineColor,
-  textColor
+  textColor,
+  scale = 1
 }: VehicleMarkerProps): JSX.Element {
   return (
     <g
@@ -29,9 +31,18 @@ export function VehicleMarker({
       }}
     >
       <title>{`${vehicle.vehicleId} - ${vehicle.status ?? "UNKNOWN"}`}</title>
-      <circle className="vehicle-marker__ring" r="18" fill="#fbf7ef" stroke={lineColor} strokeWidth="5" />
-      <circle className="vehicle-marker__core" r="8.5" fill={lineColor} />
-      <path d={getArrowPath(vehicle.directionId)} fill="none" stroke={textColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <g transform={scale === 1 ? undefined : `scale(${scale})`}>
+        <circle className="vehicle-marker__ring" r="18" fill="#fbf7ef" stroke={lineColor} strokeWidth="5" />
+        <circle className="vehicle-marker__core" r="8.5" fill={lineColor} />
+        <path
+          d={getArrowPath(vehicle.directionId)}
+          fill="none"
+          stroke={textColor}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
     </g>
   );
 }

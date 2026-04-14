@@ -4,12 +4,7 @@ import { projectLineStops } from "../domain/lineProjection";
 import { positionVehicles } from "../domain/vehiclePositioning";
 import type { LineStop, RealtimePassage, VehiclePosition, WatchSelection } from "../domain/types";
 import { usePolling } from "../hooks/usePolling";
-import { dataSourceInfo, tclClient } from "../services/api/tclClient";
-import {
-  buildRealtimeVehiclesCacheKey,
-  readPersistedRealtimeVehicles,
-  writePersistedRealtimeVehicles
-} from "../services/storage/realtimeCache";
+import { tclClient } from "../services/api/tclClient";
 import { ErrorState } from "./ErrorState";
 import { LoadingState } from "./LoadingState";
 import { NextArrivalCard } from "./NextArrivalCard";
@@ -351,6 +346,31 @@ function buildArrivalVehicleKey(arrival: Pick<EstimatedArrival, "lineId" | "vehi
   return `${arrival.lineId}:${arrival.vehicleId}`;
 }
 
+function dedupeRealtimeArrivals(arrivals: CombinedNextArrival[]): CombinedNextArrival[] {
+  const bestArrivalByVehicleKey = new Map<string, CombinedNextArrival>();
+
+  arrivals.forEach((arrival) => {
+    if (arrival.sourceType !== "REALTIME") {
+      return;
+    }
+
+    const vehicleKey = buildArrivalVehicleKey(arrival);
+    const currentBestArrival = bestArrivalByVehicleKey.get(vehicleKey);
+
+    if (!currentBestArrival || arrival.secondsAway < currentBestArrival.secondsAway) {
+      bestArrivalByVehicleKey.set(vehicleKey, arrival);
+    }
+  });
+
+  return arrivals.filter((arrival) => {
+    if (arrival.sourceType !== "REALTIME") {
+      return true;
+    }
+
+    return bestArrivalByVehicleKey.get(buildArrivalVehicleKey(arrival)) === arrival;
+  });
+}
+
 function formatArrivalValue(arrival: EstimatedArrival | null, loading: boolean, error: string | null): string {
   if (loading && !arrival) {
     return "...";
@@ -422,12 +442,6 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
     const settledResults = await Promise.allSettled(
       selection.lines.map(async (selectionLine) => {
-        const cacheKey = buildRealtimeVehiclesCacheKey(
-          dataSourceInfo.mode,
-          selectionLine.line.id,
-          selectionLine.direction.id,
-          selection.stop.id
-        );
         const lineStops = await tclClient.getLineStops(selectionLine.line.id, selectionLine.direction.id, selection.stop.id);
 
         try {
@@ -438,16 +452,6 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           );
           const updatedAt = new Date().toISOString();
 
-          void writePersistedRealtimeVehicles({
-            cacheKey,
-            mode: dataSourceInfo.mode,
-            lineId: selectionLine.line.id,
-            directionId: selectionLine.direction.id,
-            anchorStopId: selection.stop.id,
-            vehicles,
-            updatedAt
-          });
-
           return {
             ...selectionLine,
             lineStops,
@@ -456,13 +460,11 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
             errorMessage: null as string | null
           };
         } catch (error: unknown) {
-          const cachedValue = await readPersistedRealtimeVehicles(cacheKey);
-
           return {
             ...selectionLine,
             lineStops,
-            vehicles: cachedValue?.vehicles ?? [],
-            updatedAt: cachedValue?.updatedAt ?? null,
+            vehicles: [],
+            updatedAt: null,
             errorMessage: error instanceof Error ? error.message : "Temps réel indisponible."
           };
         }
@@ -509,65 +511,8 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
   }, [selection]);
 
   useEffect(() => {
-    let cancelled = false;
-
     hasFetchedOnce.current = false;
     setState(initialState);
-
-    if (!selection.lines.length) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void Promise.all(
-      selection.lines.map(async (selectionLine) => {
-        const cacheKey = buildRealtimeVehiclesCacheKey(
-          dataSourceInfo.mode,
-          selectionLine.line.id,
-          selectionLine.direction.id,
-          selection.stop.id
-        );
-        const [lineStops, cachedValue] = await Promise.all([
-          tclClient.getLineStops(selectionLine.line.id, selectionLine.direction.id, selection.stop.id),
-          readPersistedRealtimeVehicles(cacheKey)
-        ]);
-
-        return {
-          ...selectionLine,
-          lineStops,
-          vehicles: cachedValue?.vehicles ?? [],
-          updatedAt: cachedValue?.updatedAt ?? null
-        };
-      })
-    )
-      .then((cachedLines) => {
-        if (cancelled || hasFetchedOnce.current) {
-          return;
-        }
-
-        const hydratedUpdatedAt = getLatestUpdatedAt(cachedLines.map((selectionLine) => selectionLine.updatedAt));
-
-        if (!hydratedUpdatedAt) {
-          return;
-        }
-
-        hasFetchedOnce.current = true;
-        setState({
-          lines: cachedLines,
-          passages: [],
-          loading: false,
-          error: null,
-          updatedAt: hydratedUpdatedAt
-        });
-      })
-      .catch(() => {
-        // On laissera ensuite le polling reseau faire le travail normal.
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, [selection]);
 
   usePolling(fetchSelection, 10_000, {
@@ -757,35 +702,37 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
   const arrivalCandidates = useMemo<CombinedNextArrival[]>(() => {
     const nowMs = Date.now();
-    const arrivalsFromPassages = filterOverlappingTheoreticalArrivals(
-      state.passages
-      .flatMap((passage) => {
-        const selectionLine = selection.lines.find(
-          (candidate) =>
-            candidate.line.id === passage.lineId &&
-            (!passage.directionId || candidate.direction.id === passage.directionId)
-        );
+    const arrivalsFromPassages = dedupeRealtimeArrivals(
+      filterOverlappingTheoreticalArrivals(
+        state.passages
+          .flatMap((passage) => {
+            const selectionLine = selection.lines.find(
+              (candidate) =>
+                candidate.line.id === passage.lineId &&
+                (!passage.directionId || candidate.direction.id === passage.directionId)
+            );
 
-        if (!selectionLine) {
-          return [];
-        }
+            if (!selectionLine) {
+              return [];
+            }
 
-        const estimatedArrival = toEstimatedArrival(passage, nowMs);
+            const estimatedArrival = toEstimatedArrival(passage, nowMs);
 
-        if (!estimatedArrival) {
-          return [];
-        }
+            if (!estimatedArrival) {
+              return [];
+            }
 
-        return [
-          {
-            ...estimatedArrival,
-            lineShortName: selectionLine.line.shortName,
-            lineColor: selectionLine.line.color ?? "#0b7a75",
-            textColor: selectionLine.line.textColor ?? "#ffffff"
-          }
-        ];
-      })
-      .sort((left, right) => left.secondsAway - right.secondsAway)
+            return [
+              {
+                ...estimatedArrival,
+                lineShortName: selectionLine.line.shortName,
+                lineColor: selectionLine.line.color ?? "#0b7a75",
+                textColor: selectionLine.line.textColor ?? "#ffffff"
+              }
+            ];
+          })
+          .sort((left, right) => left.secondsAway - right.secondsAway)
+      )
     );
     const fallbackArrivals = state.lines
       .map((selectionLine) => {
@@ -823,7 +770,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       combinedArrivals.push(arrival);
     });
 
-    return combinedArrivals.sort((left, right) => left.secondsAway - right.secondsAway);
+    return dedupeRealtimeArrivals(combinedArrivals).sort((left, right) => left.secondsAway - right.secondsAway);
   }, [selection.lines, state.lines, state.passages]);
   const nextArrival = arrivalCandidates[0] ?? null;
   const followingArrival = arrivalCandidates[1] ?? null;
@@ -1028,6 +975,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                     vehicle={vehicle}
                     lineColor={vehicle.lineColor}
                     textColor={vehicle.textColor}
+                    scale={1.65}
                   />
                 ))}
 
