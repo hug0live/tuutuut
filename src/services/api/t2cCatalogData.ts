@@ -15,7 +15,7 @@ import {
   type TheoreticalTimetables
 } from "./catalogRuntime";
 
-const catalogApi = createCatalogApi(new URL("../../tclBusCatalog.json", import.meta.url).href, "local TCL catalog");
+const catalogApi = createCatalogApi(new URL("../../t2cBusCatalog.json", import.meta.url).href, "local T2C catalog");
 
 export {
   getBestPattern,

@@ -9,6 +9,8 @@ type StopSelectorProps = {
   loading: boolean;
   error: string | null;
   selectedStop: Stop | null;
+  disabled?: boolean;
+  networkLabel?: string;
   onSelectStop: (stop: Stop) => void;
   onClearStop: () => void;
 };
@@ -20,6 +22,8 @@ export function StopSelector({
   loading,
   error,
   selectedStop,
+  disabled = false,
+  networkLabel = "reseau",
   onSelectStop,
   onClearStop
 }: StopSelectorProps): JSX.Element {
@@ -39,10 +43,11 @@ export function StopSelector({
           className="search-input"
           type="search"
           value={query}
+          disabled={disabled}
           onChange={(event) => {
             onQueryChange(event.target.value);
           }}
-          placeholder="Rechercher un arrêt TCL"
+          placeholder={disabled ? "Choisissez d'abord une ville" : `Rechercher un arrêt ${networkLabel}`}
           autoComplete="off"
         />
 
@@ -73,9 +78,10 @@ export function StopSelector({
                       onClick={() => {
                         onSelectStop(stop);
                       }}
+                      disabled={disabled}
                     >
                       <span className="result-button__title">{stop.name}</span>
-                      <span className="result-button__meta">Arrêt TCL</span>
+                      <span className="result-button__meta">Arrêt {networkLabel}</span>
                     </button>
                   </li>
                 );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Stop } from "../domain/types";
-import { tclClient } from "../services/api/tclClient";
+import { useAppStore } from "../store/useAppStore";
 
 type StopsSearchState = {
   stops: Stop[];
@@ -16,8 +16,14 @@ const initialState: StopsSearchState = {
 
 export function useStopsSearch(query: string): StopsSearchState {
   const [state, setState] = useState<StopsSearchState>(initialState);
+  const { transportAdapter } = useAppStore();
 
   useEffect(() => {
+    if (!transportAdapter) {
+      setState(initialState);
+      return;
+    }
+
     let cancelled = false;
 
     setState((currentState) => ({
@@ -26,7 +32,7 @@ export function useStopsSearch(query: string): StopsSearchState {
       error: null
     }));
 
-    void tclClient
+    void transportAdapter
       .searchStops(query)
       .then((stops) => {
         if (cancelled) {
@@ -54,7 +60,7 @@ export function useStopsSearch(query: string): StopsSearchState {
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [query, transportAdapter]);
 
   return state;
 }

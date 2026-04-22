@@ -3,9 +3,15 @@ import { CombinedStopDiagram } from "./CombinedStopDiagram";
 
 type DashboardProps = {
   selections: WatchSelection[];
+  selectedCityLabel: string;
+  hasSelectedCity: boolean;
 };
 
-export function Dashboard({ selections }: DashboardProps): JSX.Element {
+export function Dashboard({ selections, selectedCityLabel, hasSelectedCity }: DashboardProps): JSX.Element {
+  if (!hasSelectedCity) {
+    return <section className="dashboard-stack" aria-hidden="true" />;
+  }
+
   if (selections.length === 0) {
     return (
       <section className="card dashboard-empty">
@@ -15,6 +21,7 @@ export function Dashboard({ selections }: DashboardProps): JSX.Element {
           Recherchez un arrêt, choisissez une direction, cochez une ou plusieurs lignes, puis
           validez avec OK. Vous pouvez suivre jusqu&apos;à 2 arrêts.
         </p>
+        <p className="dashboard-empty__city">Ville active : {selectedCityLabel}</p>
       </section>
     );
   }

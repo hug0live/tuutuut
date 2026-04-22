@@ -1,0 +1,914 @@
+import type { RealtimePassageRequest, TransportAdapter } from "../tclClient";
+import type {
+  Line,
+  LineStop,
+  RealtimePassage,
+  Stop,
+  VehiclePosition,
+  VehicleStatus
+} from "../../../domain/types";
+import {
+  type CatalogLine,
+  type TheoreticalService,
+  type TheoreticalTimetables,
+  getCatalogLineStops,
+  getCatalogLinesByStop,
+  loadCatalog,
+  normalizeCatalogText,
+  resolveStopIds,
+  searchCatalogStops
+} from "../t2cCatalogData";
+import type { CatalogRuntime } from "../t2cCatalogData";
+
+type ProjectedVehicleSegment = {
+  stopIdPrevious?: string;
+  stopIdNext?: string;
+  progressBetweenStops?: number;
+  scalar?: number;
+};
+
+type CoordinatePoint = {
+  lat: number;
+  lon: number;
+};
+
+type BusTrackerLine = {
+  id: number;
+  references?: string[];
+  number: string;
+  girouetteNumber?: string | null;
+  color?: string | null;
+  textColor?: string | null;
+  onlineVehicleCount?: number;
+};
+
+type BusTrackerNetwork = {
+  id: number;
+  ref: string;
+  name: string;
+  lines?: BusTrackerLine[];
+};
+
+type BusTrackerVehicle = {
+  id: number;
+  number: string;
+  designation?: string | null;
+  lastSeenAt?: string | null;
+  activity?: {
+    status?: string;
+    since?: string | null;
+    lineId?: number;
+    markerId?: string;
+    position?: {
+      latitude: number;
+      longitude: number;
+    };
+  };
+};
+
+type VehicleDirectionEstimate = {
+  inferredDirection: "forward" | "backward" | "unknown";
+  status: VehicleStatus;
+};
+
+type VehicleDirectionSnapshot = {
+  scalar: number;
+  inferredDirection: "forward" | "backward" | "unknown";
+  timestampMs: number;
+};
+
+type RealtimePassageContext = {
+  request: RealtimePassageRequest;
+  fullLineStops: LineStop[];
+  visibleVehicles: VehiclePosition[];
+  realtimePassages: RealtimePassage[];
+};
+
+const busTrackerApiBaseUrl = normalizeBusTrackerApiBaseUrl(import.meta.env.VITE_BUS_TRACKER_PROXY_PATH);
+const busTrackerNetworkId = 101;
+const orderedStopsCache = new Map<string, Promise<LineStop[]>>();
+const busTrackerLineCache = new Map<string, Promise<BusTrackerLine | null>>();
+const vehicleDirectionSnapshots = new Map<string, VehicleDirectionSnapshot>();
+let busTrackerNetworkPromise: Promise<BusTrackerNetwork> | null = null;
+
+function normalizeBusTrackerApiBaseUrl(value: string | undefined): string {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    return "/api/bus-tracker";
+  }
+
+  return trimmedValue.startsWith("/") ? trimmedValue : `/${trimmedValue}`;
+}
+
+function normalizeText(value: string): string {
+  return normalizeCatalogText(value);
+}
+
+function normalizeIdentifier(value: string): string {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, "");
+}
+
+function normalizeBusTrackerLineRef(value: string): string {
+  return normalizeIdentifier(value).replace(/^[a-z0-9]*line/, "");
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getLineStopCacheKey(lineId: string, directionId?: string, anchorStopId?: string): string {
+  return `${lineId}::${directionId ?? "all"}::${anchorStopId ?? "all"}`;
+}
+
+async function loadOrderedLineStops(
+  lineId: string,
+  directionId?: string,
+  anchorStopId?: string
+): Promise<LineStop[]> {
+  const cacheKey = getLineStopCacheKey(lineId, directionId, anchorStopId);
+  const cachedValue = orderedStopsCache.get(cacheKey);
+
+  if (cachedValue) {
+    return cachedValue;
+  }
+
+  const pendingValue = getCatalogLineStops(lineId, directionId, anchorStopId);
+  orderedStopsCache.set(cacheKey, pendingValue);
+  return pendingValue;
+}
+
+function getCoordinatePoint(stopById: Map<string, Stop>, stopId: string): CoordinatePoint | null {
+  const stop = stopById.get(stopId);
+
+  if (!stop || stop.lat === undefined || stop.lon === undefined) {
+    return null;
+  }
+
+  return {
+    lat: stop.lat,
+    lon: stop.lon
+  };
+}
+
+function toCartesian(point: CoordinatePoint, referenceLat: number): { x: number; y: number } {
+  const radians = Math.PI / 180;
+  const metersPerLatDegree = 111_132;
+  const metersPerLonDegree = 111_320 * Math.cos(referenceLat * radians);
+
+  return {
+    x: point.lon * metersPerLonDegree,
+    y: point.lat * metersPerLatDegree
+  };
+}
+
+function projectGpsToLine(
+  location: CoordinatePoint,
+  lineStops: LineStop[],
+  stopById: Map<string, Stop>
+): ProjectedVehicleSegment | null {
+  const referenceLat = location.lat;
+  const projectedLocation = toCartesian(location, referenceLat);
+  let bestProjection:
+    | {
+        distanceMeters: number;
+        stopIdPrevious: string;
+        stopIdNext: string;
+        progressBetweenStops: number;
+      }
+    | undefined;
+
+  for (let index = 0; index < lineStops.length - 1; index += 1) {
+    const currentStop = lineStops[index];
+    const nextStop = lineStops[index + 1];
+
+    if (!currentStop || !nextStop) {
+      continue;
+    }
+
+    const currentPoint = getCoordinatePoint(stopById, currentStop.stopId);
+    const nextPoint = getCoordinatePoint(stopById, nextStop.stopId);
+
+    if (!currentPoint || !nextPoint) {
+      continue;
+    }
+
+    const a = toCartesian(currentPoint, referenceLat);
+    const b = toCartesian(nextPoint, referenceLat);
+    const segmentX = b.x - a.x;
+    const segmentY = b.y - a.y;
+    const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+    if (segmentLengthSquared <= 0) {
+      continue;
+    }
+
+    const rawProgress =
+      ((projectedLocation.x - a.x) * segmentX + (projectedLocation.y - a.y) * segmentY) / segmentLengthSquared;
+    const progressBetweenStops = clamp(rawProgress, 0, 1);
+    const projectionX = a.x + segmentX * progressBetweenStops;
+    const projectionY = a.y + segmentY * progressBetweenStops;
+    const deltaX = projectedLocation.x - projectionX;
+    const deltaY = projectedLocation.y - projectionY;
+    const distanceMeters = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    if (!bestProjection || distanceMeters < bestProjection.distanceMeters) {
+      bestProjection = {
+        distanceMeters,
+        stopIdPrevious: currentStop.stopId,
+        stopIdNext: nextStop.stopId,
+        progressBetweenStops
+      };
+    }
+  }
+
+  if (!bestProjection || bestProjection.distanceMeters > 450) {
+    return null;
+  }
+
+  return {
+    stopIdPrevious: bestProjection.stopIdPrevious,
+    stopIdNext: bestProjection.stopIdNext,
+    progressBetweenStops: bestProjection.progressBetweenStops,
+    scalar:
+      lineStops.findIndex((stop) => stop.stopId === bestProjection.stopIdPrevious) +
+      bestProjection.progressBetweenStops
+  };
+}
+
+function pruneVehicleDirectionSnapshots(nowMs: number): void {
+  for (const [snapshotKey, snapshot] of vehicleDirectionSnapshots.entries()) {
+    if (nowMs - snapshot.timestampMs > 20 * 60 * 1000) {
+      vehicleDirectionSnapshots.delete(snapshotKey);
+    }
+  }
+}
+
+function estimateVehicleDirection(snapshotKey: string, scalar: number, timestamp: string): VehicleDirectionEstimate {
+  const nowMs = Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : Date.now();
+  const previousSnapshot = vehicleDirectionSnapshots.get(snapshotKey);
+  let inferredDirection: VehicleDirectionSnapshot["inferredDirection"] = previousSnapshot?.inferredDirection ?? "unknown";
+  let status: VehicleStatus = previousSnapshot ? "STOPPED" : "UNKNOWN";
+
+  if (previousSnapshot) {
+    const delta = scalar - previousSnapshot.scalar;
+
+    if (Math.abs(delta) >= 0.04) {
+      inferredDirection = delta > 0 ? "forward" : "backward";
+      status = "IN_TRANSIT";
+    } else if (previousSnapshot.inferredDirection !== "unknown") {
+      inferredDirection = previousSnapshot.inferredDirection;
+    }
+  }
+
+  vehicleDirectionSnapshots.set(snapshotKey, {
+    scalar,
+    inferredDirection,
+    timestampMs: nowMs
+  });
+  pruneVehicleDirectionSnapshots(nowMs);
+
+  return {
+    inferredDirection,
+    status
+  };
+}
+
+async function fetchBusTrackerJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${busTrackerApiBaseUrl}/${path}`, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`API Bus Tracker indisponible (${response.status}) sur ${path}.`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function loadBusTrackerNetwork(): Promise<BusTrackerNetwork> {
+  if (busTrackerNetworkPromise) {
+    return busTrackerNetworkPromise;
+  }
+
+  busTrackerNetworkPromise = fetchBusTrackerJson<BusTrackerNetwork>(`networks/${busTrackerNetworkId}?withDetails=true`);
+  return busTrackerNetworkPromise;
+}
+
+function busTrackerLineMatchesCatalogLine(candidate: BusTrackerLine, line: CatalogLine): boolean {
+  const normalizedShortName = normalizeIdentifier(line.shortName);
+  const normalizedLineId = normalizeIdentifier(line.id);
+  const candidateNumbers = [candidate.number, candidate.girouetteNumber]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => normalizeIdentifier(value));
+  const candidateRefs = (candidate.references ?? []).map(normalizeBusTrackerLineRef);
+
+  return (
+    candidateNumbers.includes(normalizedShortName) ||
+    candidateNumbers.includes(normalizedLineId) ||
+    candidateRefs.includes(normalizedShortName) ||
+    candidateRefs.includes(normalizedLineId)
+  );
+}
+
+async function resolveBusTrackerLine(line: CatalogLine): Promise<BusTrackerLine | null> {
+  const cachedValue = busTrackerLineCache.get(line.id);
+
+  if (cachedValue) {
+    return cachedValue;
+  }
+
+  const pendingValue = loadBusTrackerNetwork().then((network) => {
+    const matchedLine = network.lines?.find((candidateLine) => busTrackerLineMatchesCatalogLine(candidateLine, line));
+    return matchedLine ?? null;
+  });
+
+  busTrackerLineCache.set(line.id, pendingValue);
+  return pendingValue;
+}
+
+function buildVehicleFromBusTrackerVehicle(
+  vehicle: BusTrackerVehicle,
+  lineId: string,
+  directionId: string | undefined,
+  lineStops: LineStop[],
+  stopById: Map<string, Stop>
+): VehiclePosition | null {
+  const position = vehicle.activity?.position;
+
+  if (!position) {
+    return null;
+  }
+
+  const projectedSegment = projectGpsToLine(
+    {
+      lat: position.latitude,
+      lon: position.longitude
+    },
+    lineStops,
+    stopById
+  );
+
+  if (!projectedSegment || projectedSegment.scalar === undefined) {
+    return null;
+  }
+
+  const timestamp = vehicle.lastSeenAt ?? vehicle.activity?.since ?? new Date().toISOString();
+  const estimate = estimateVehicleDirection(`${lineId}:${vehicle.id}`, projectedSegment.scalar, timestamp);
+
+  if (estimate.inferredDirection === "backward") {
+    return null;
+  }
+
+  return {
+    vehicleId: String(vehicle.id),
+    lineId,
+    ...(directionId ? { directionId } : {}),
+    ...(projectedSegment.stopIdPrevious ? { stopIdPrevious: projectedSegment.stopIdPrevious } : {}),
+    ...(projectedSegment.stopIdNext ? { stopIdNext: projectedSegment.stopIdNext } : {}),
+    ...(projectedSegment.progressBetweenStops !== undefined
+      ? { progressBetweenStops: clamp(projectedSegment.progressBetweenStops, 0, 1) }
+      : {}),
+    timestamp,
+    status: estimate.status
+  };
+}
+
+async function fetchBusTrackerRealtimeVehicles(
+  line: CatalogRuntime["lines"][number],
+  directionId: string | undefined,
+  lineStops: LineStop[],
+  stopById: CatalogRuntime["stopById"]
+): Promise<VehiclePosition[]> {
+  const busTrackerLine = await resolveBusTrackerLine(line);
+
+  if (!busTrackerLine) {
+    return [];
+  }
+
+  const vehicles = await fetchBusTrackerJson<BusTrackerVehicle[]>(`lines/${busTrackerLine.id}/online-vehicles`);
+
+  return vehicles
+    .map((vehicle) => buildVehicleFromBusTrackerVehicle(vehicle, line.id, directionId, lineStops, stopById))
+    .filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
+}
+
+function findAnchorIndex(fullLineStops: LineStop[], displayedLineStops: LineStop[]): number | null {
+  const anchorStop = displayedLineStops.at(-1);
+
+  if (!anchorStop) {
+    return null;
+  }
+
+  const exactIndex = fullLineStops.findIndex((stop) => stop.stopId === anchorStop.stopId);
+
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  const normalizedAnchorName = normalizeText(anchorStop.stopName);
+  const nameMatches = fullLineStops
+    .map((stop, index) => ({
+      index,
+      isMatch: normalizeText(stop.stopName) === normalizedAnchorName
+    }))
+    .filter((entry) => entry.isMatch)
+    .map((entry) => entry.index);
+
+  return nameMatches.at(-1) ?? null;
+}
+
+function filterVehiclesAtOrBeforeAnchor(
+  vehicles: VehiclePosition[],
+  fullLineStops: LineStop[],
+  displayedLineStops: LineStop[]
+): VehiclePosition[] {
+  const anchorIndex = findAnchorIndex(fullLineStops, displayedLineStops);
+
+  if (anchorIndex === null) {
+    return vehicles;
+  }
+
+  const stopIndexById = new Map(fullLineStops.map((stop, index) => [stop.stopId, index]));
+
+  return vehicles.filter((vehicle) => {
+    const previousIndex = vehicle.stopIdPrevious ? stopIndexById.get(vehicle.stopIdPrevious) : undefined;
+    const nextIndex = vehicle.stopIdNext ? stopIndexById.get(vehicle.stopIdNext) : undefined;
+
+    if ((previousIndex ?? -1) > anchorIndex || (nextIndex ?? -1) > anchorIndex) {
+      return false;
+    }
+
+    if (previousIndex === anchorIndex && nextIndex === undefined && vehicle.status !== "STOPPED") {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildRealtimePassageFromVehicle(
+  vehicle: VehiclePosition,
+  lineStops: LineStop[],
+  targetStopIds: Set<string>,
+  nowMs: number
+): RealtimePassage | null {
+  const relevantStopIds = lineStops.map((stop) => stop.stopId);
+  const currentIndex = vehicle.stopIdPrevious ? relevantStopIds.indexOf(vehicle.stopIdPrevious) : -1;
+  const nextIndex = vehicle.stopIdNext ? relevantStopIds.indexOf(vehicle.stopIdNext) : -1;
+
+  if (vehicle.stopIdPrevious && targetStopIds.has(vehicle.stopIdPrevious) && vehicle.status === "STOPPED") {
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId: vehicle.stopIdPrevious,
+      expectedAt: new Date(nowMs).toISOString(),
+      minutesAway: 0,
+      status: "DUE",
+      sourceType: "REALTIME",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  if (currentIndex < 0 || nextIndex <= currentIndex) {
+    return null;
+  }
+
+  let estimatedSeconds = 0;
+
+  for (let index = currentIndex + 1; index <= nextIndex; index += 1) {
+    const traversedSegmentSeconds =
+      index === nextIndex && vehicle.progressBetweenStops !== undefined
+        ? Math.max(0, Math.round((1 - clamp(vehicle.progressBetweenStops, 0, 1)) * 45))
+        : 45;
+    estimatedSeconds += traversedSegmentSeconds;
+
+    const stopId = relevantStopIds[index];
+
+    if (!stopId || !targetStopIds.has(stopId)) {
+      continue;
+    }
+
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId,
+      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
+      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
+      status: estimatedSeconds < 45 ? "DUE" : "APPROACHING",
+      sourceType: "REALTIME",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  for (let index = nextIndex + 1; index < relevantStopIds.length; index += 1) {
+    estimatedSeconds += 45;
+    const stopId = relevantStopIds[index];
+
+    if (!stopId || !targetStopIds.has(stopId)) {
+      continue;
+    }
+
+    return {
+      vehicleId: vehicle.vehicleId,
+      lineId: vehicle.lineId,
+      stopId,
+      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
+      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
+      status: "SCHEDULED",
+      sourceType: "REALTIME",
+      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
+    };
+  }
+
+  return null;
+}
+
+function mapPassageTypeToStatus(sourceType: "REALTIME" | "THEORETICAL", expectedAt: string, nowMs: number): RealtimePassage["status"] {
+  const secondsAway = Math.max(0, Math.round((Date.parse(expectedAt) - nowMs) / 1000));
+
+  if (secondsAway <= 45) {
+    return "DUE";
+  }
+
+  if (sourceType === "REALTIME" || secondsAway <= 180) {
+    return "APPROACHING";
+  }
+
+  return "SCHEDULED";
+}
+
+function formatLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+function getWeekdayIndex(date: Date): number {
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
+}
+
+function isServiceActive(
+  service: TheoreticalService,
+  dateKey: string,
+  weekdayIndex: number,
+  timetables: TheoreticalTimetables
+): boolean {
+  const dayExceptions = timetables.exceptions[dateKey];
+  const serviceIndex = timetables.services.findIndex((candidate) => candidate.id === service.id);
+
+  if (serviceIndex >= 0) {
+    if (dayExceptions?.remove.includes(serviceIndex)) {
+      return false;
+    }
+
+    if (dayExceptions?.add.includes(serviceIndex)) {
+      return true;
+    }
+  }
+
+  if (dateKey < service.startDate || dateKey > service.endDate) {
+    return false;
+  }
+
+  return service.days.charAt(weekdayIndex) === "1";
+}
+
+function buildDateFromSeconds(baseDate: Date, totalSeconds: number): Date {
+  const nextDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0, 0, 0, 0);
+  nextDate.setSeconds(totalSeconds);
+  return nextDate;
+}
+
+function lowerBound(values: number[], target: number): number {
+  let low = 0;
+  let high = values.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const middleValue = values[middle] ?? 0;
+
+    if (middleValue < target) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
+}
+
+function getScheduleKey(lineId: string, directionId: string | undefined, stopId: string): string {
+  return `${lineId}|${directionId ?? "0"}|${stopId}`;
+}
+
+function computeMinimumScheduledTravelSeconds(
+  timetables: TheoreticalTimetables,
+  lineId: string,
+  directionId: string | undefined,
+  originStopId: string,
+  targetStopId: string,
+  serviceIndex: number
+): number | null {
+  if (originStopId === targetStopId) {
+    return 0;
+  }
+
+  const originSchedules = timetables.stopSchedules[getScheduleKey(lineId, directionId, originStopId)] ?? [];
+  const targetSchedules = timetables.stopSchedules[getScheduleKey(lineId, directionId, targetStopId)] ?? [];
+  const originDepartures = originSchedules.find(([candidateServiceIndex]) => candidateServiceIndex === serviceIndex)?.[1];
+  const targetDepartures = targetSchedules.find(([candidateServiceIndex]) => candidateServiceIndex === serviceIndex)?.[1];
+
+  if (!originDepartures || !targetDepartures || originDepartures.length === 0 || targetDepartures.length === 0) {
+    return null;
+  }
+
+  let originIndex = 0;
+  let minimumTravelSeconds: number | null = null;
+
+  for (const targetDeparture of targetDepartures) {
+    while (
+      originIndex + 1 < originDepartures.length &&
+      (originDepartures[originIndex + 1] ?? Number.POSITIVE_INFINITY) <= targetDeparture
+    ) {
+      originIndex += 1;
+    }
+
+    const originDeparture = originDepartures[originIndex];
+
+    if (originDeparture === undefined || originDeparture > targetDeparture) {
+      continue;
+    }
+
+    const travelSeconds = targetDeparture - originDeparture;
+
+    if (travelSeconds < 0) {
+      continue;
+    }
+
+    minimumTravelSeconds =
+      minimumTravelSeconds === null ? travelSeconds : Math.min(minimumTravelSeconds, travelSeconds);
+  }
+
+  return minimumTravelSeconds;
+}
+
+function isImpossibleTheoreticalPassage(
+  context: RealtimePassageContext,
+  timetables: TheoreticalTimetables,
+  physicalStopId: string,
+  serviceIndex: number,
+  secondsAway: number
+): boolean {
+  if (context.visibleVehicles.length > 0) {
+    return false;
+  }
+
+  const originStopId = context.fullLineStops[0]?.stopId;
+
+  if (!originStopId) {
+    return false;
+  }
+
+  const minimumTravelSeconds = computeMinimumScheduledTravelSeconds(
+    timetables,
+    context.request.lineId,
+    context.request.directionId,
+    originStopId,
+    physicalStopId,
+    serviceIndex
+  );
+
+  if (minimumTravelSeconds === null) {
+    return false;
+  }
+
+  return secondsAway + 60 < minimumTravelSeconds;
+}
+
+function getImminentVisiblePassageCount(
+  context: RealtimePassageContext,
+  physicalStopId: string,
+  minimumTravelSeconds: number,
+  nowMs: number
+): number {
+  return context.realtimePassages.filter((passage) => {
+    if (passage.stopId !== physicalStopId) {
+      return false;
+    }
+
+    const secondsAway = Math.max(0, Math.round((Date.parse(passage.expectedAt) - nowMs) / 1000));
+    return secondsAway + 60 < minimumTravelSeconds;
+  }).length;
+}
+
+async function buildTheoreticalPassages(
+  stopId: string,
+  contexts: RealtimePassageContext[]
+): Promise<RealtimePassage[]> {
+  if (contexts.length === 0) {
+    return [];
+  }
+
+  const runtime = await loadCatalog();
+  const timetables = runtime.theoreticalTimetables;
+
+  if (!timetables) {
+    return [];
+  }
+
+  const targetStopIds = resolveStopIds(runtime, stopId);
+  const nowMs = Date.now();
+  const nowDate = new Date(nowMs);
+  const results: RealtimePassage[] = [];
+  const seenKeys = new Set<string>();
+
+  for (let offsetDays = 0; offsetDays <= 1; offsetDays += 1) {
+    const serviceDate = new Date();
+    serviceDate.setHours(0, 0, 0, 0);
+    serviceDate.setDate(serviceDate.getDate() + offsetDays);
+    const dateKey = formatLocalDateKey(serviceDate);
+    const weekdayIndex = getWeekdayIndex(serviceDate);
+    const thresholdSeconds =
+      offsetDays === 0
+        ? nowDate.getHours() * 3600 + nowDate.getMinutes() * 60 + nowDate.getSeconds()
+        : 0;
+
+    contexts.forEach((context) => {
+      targetStopIds.forEach((physicalStopId) => {
+        const scheduleKey = getScheduleKey(context.request.lineId, context.request.directionId, physicalStopId);
+        const scheduleEntries = timetables.stopSchedules[scheduleKey] ?? [];
+        let imminentAcceptedCount = 0;
+
+        scheduleEntries.forEach(([serviceIndex, departures]) => {
+          const service = timetables.services[serviceIndex];
+
+          if (!service || !isServiceActive(service, dateKey, weekdayIndex, timetables)) {
+            return;
+          }
+
+          const departureIndex = lowerBound(departures, thresholdSeconds);
+
+          for (let index = departureIndex; index < Math.min(departureIndex + 3, departures.length); index += 1) {
+            const departureSeconds = departures[index];
+
+            if (departureSeconds === undefined) {
+              continue;
+            }
+
+            const departureDate = buildDateFromSeconds(serviceDate, departureSeconds);
+            const expectedAt = departureDate.toISOString();
+            const seenKey = `${context.request.lineId}:${context.request.directionId ?? ""}:${physicalStopId}:${expectedAt}`;
+
+            if (seenKeys.has(seenKey)) {
+              continue;
+            }
+
+            seenKeys.add(seenKey);
+            const secondsAway = Math.max(0, Math.round((departureDate.getTime() - nowMs) / 1000));
+
+            const originStopId = context.fullLineStops[0]?.stopId;
+            const minimumTravelSeconds =
+              originStopId
+                ? computeMinimumScheduledTravelSeconds(
+                    timetables,
+                    context.request.lineId,
+                    context.request.directionId,
+                    originStopId,
+                    physicalStopId,
+                    serviceIndex
+                  )
+                : null;
+
+            if (isImpossibleTheoreticalPassage(context, timetables, physicalStopId, serviceIndex, secondsAway)) {
+              continue;
+            }
+
+            if (minimumTravelSeconds !== null && secondsAway + 60 < minimumTravelSeconds) {
+              const occupiedImminentSlots =
+                getImminentVisiblePassageCount(context, physicalStopId, minimumTravelSeconds, nowMs) +
+                imminentAcceptedCount;
+
+              if (occupiedImminentSlots >= context.visibleVehicles.length) {
+                continue;
+              }
+
+              imminentAcceptedCount += 1;
+            }
+
+            results.push({
+              vehicleId: `${context.request.lineId}:${service.id}:${departureSeconds}`,
+              lineId: context.request.lineId,
+              stopId,
+              ...(context.request.directionId ? { directionId: context.request.directionId } : {}),
+              expectedAt,
+              minutesAway: Math.max(0, Math.round(secondsAway / 60)),
+              status: mapPassageTypeToStatus("THEORETICAL", expectedAt, nowMs),
+              sourceType: "THEORETICAL"
+            });
+          }
+        });
+      });
+    });
+
+    if (results.length >= 16) {
+      break;
+    }
+  }
+
+  return results.sort((left, right) => left.expectedAt.localeCompare(right.expectedAt)).slice(0, 16);
+}
+
+export const t2cAdapter: TransportAdapter = {
+  source: {
+    mode: "t2c",
+    label: "GPS temps reel via Bus Tracker",
+    detail:
+      "Topologie GTFS locale + positions vehicules reelles via Bus Tracker pour le reseau T2C. Repli theorique si necessaire.",
+    realtime: true
+  },
+
+  async searchStops(query: string): Promise<Stop[]> {
+    return searchCatalogStops(query);
+  },
+
+  async getLinesByStop(stopId: string): Promise<Line[]> {
+    return getCatalogLinesByStop(stopId);
+  },
+
+  async getLineStops(lineId: string, directionId?: string, anchorStopId?: string): Promise<LineStop[]> {
+    return loadOrderedLineStops(lineId, directionId, anchorStopId);
+  },
+
+  async getRealtimeVehicles(
+    lineId: string,
+    directionId?: string,
+    anchorStopId?: string
+  ): Promise<VehiclePosition[]> {
+    const [{ lineById, stopById }, fullLineStops, displayedLineStops] = await Promise.all([
+      loadCatalog(),
+      loadOrderedLineStops(lineId, directionId),
+      loadOrderedLineStops(lineId, directionId, anchorStopId)
+    ]);
+    const line = lineById.get(lineId);
+
+    if (!line || fullLineStops.length === 0) {
+      return [];
+    }
+
+    const vehicles = await fetchBusTrackerRealtimeVehicles(line, directionId, fullLineStops, stopById);
+    return filterVehiclesAtOrBeforeAnchor(vehicles, fullLineStops, displayedLineStops);
+  },
+
+  async getRealtimePassages(stopId: string, requests: RealtimePassageRequest[] = []): Promise<RealtimePassage[]> {
+    const runtime = await loadCatalog();
+    const targetStopIds = new Set(resolveStopIds(runtime, stopId));
+    const candidateRequests: RealtimePassageRequest[] =
+      requests.length > 0
+        ? requests
+        : runtime.lines.flatMap((line) =>
+            line.directions.map<RealtimePassageRequest>((direction) => ({
+              lineId: line.id,
+              directionId: direction.id,
+              directionName: direction.name
+            }))
+          );
+    const requestResults = await Promise.all(
+      candidateRequests.map(async (request) => {
+        const [fullLineStops, lineStops, vehicles] = await Promise.all([
+          loadOrderedLineStops(request.lineId, request.directionId),
+          loadOrderedLineStops(request.lineId, request.directionId, request.anchorStopId),
+          t2cAdapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId)
+        ]);
+        const realtimePassages = vehicles
+          .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, Date.now()))
+          .filter((passage): passage is RealtimePassage => passage !== null);
+
+        return {
+          context: {
+            request,
+            fullLineStops,
+            visibleVehicles: vehicles,
+            realtimePassages
+          },
+          realtimePassages
+        };
+      })
+    );
+    const theoreticalPassages = await buildTheoreticalPassages(
+      stopId,
+      requestResults.map((result) => result.context)
+    );
+
+    return requestResults
+      .flatMap((result) => result.realtimePassages)
+      .concat(theoreticalPassages)
+      .sort((left, right) => left.expectedAt.localeCompare(right.expectedAt))
+      .slice(0, 16);
+  }
+};

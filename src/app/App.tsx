@@ -10,10 +10,23 @@ import { useLinesByStop } from "../hooks/useLinesByStop";
 import { useStopsSearch } from "../hooks/useStopsSearch";
 import { useAppStore } from "../store/useAppStore";
 
-const WATCH_SELECTIONS_STORAGE_KEY = "tcl-live-dashboard::watch-selections";
 const MAX_WATCH_SELECTIONS = 2;
 const APP_UPDATE_EVENT = "tuutuut:update-status";
 const appLastUpdatedAt = __APP_LAST_UPDATED_AT__;
+const SELECTED_LINES_STORAGE_KEY = "tuutuut::selected-lines-by-city";
+
+function getWatchSelectionsStorageKey(cityId: string): string {
+  return `tuutuut::watch-selections::${cityId}`;
+}
+
+type StoredSelectedLinesByCity = {
+  cities: Record<
+    string,
+    {
+      selectedLineIds: string[];
+    }
+  >;
+};
 
 function formatLastUpdatedAt(timestamp: string): string | null {
   const parsedTimestamp = Date.parse(timestamp);
@@ -80,12 +93,33 @@ function isWatchSelection(value: unknown): value is WatchSelection {
   );
 }
 
-function loadWatchSelections(): WatchSelection[] {
-  if (typeof window === "undefined") {
+function isStoredSelectedLinesByCity(value: unknown): value is StoredSelectedLinesByCity {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<StoredSelectedLinesByCity>;
+
+  if (!candidate.cities || typeof candidate.cities !== "object") {
+    return false;
+  }
+
+  return Object.values(candidate.cities).every((cityState) => {
+    if (!cityState || typeof cityState !== "object") {
+      return false;
+    }
+
+    const maybeSelectedLineIds = (cityState as { selectedLineIds?: unknown }).selectedLineIds;
+    return Array.isArray(maybeSelectedLineIds) && maybeSelectedLineIds.every((lineId) => typeof lineId === "string");
+  });
+}
+
+function loadWatchSelections(cityId: string | null): WatchSelection[] {
+  if (typeof window === "undefined" || !cityId) {
     return [];
   }
 
-  const storedValue = window.localStorage.getItem(WATCH_SELECTIONS_STORAGE_KEY);
+  const storedValue = window.localStorage.getItem(getWatchSelectionsStorageKey(cityId));
 
   if (!storedValue) {
     return [];
@@ -104,22 +138,77 @@ function loadWatchSelections(): WatchSelection[] {
   }
 }
 
+function loadSelectedLineIdsByCity(): StoredSelectedLinesByCity {
+  if (typeof window === "undefined") {
+    return { cities: {} };
+  }
+
+  const storedValue = window.localStorage.getItem(SELECTED_LINES_STORAGE_KEY);
+
+  if (!storedValue) {
+    return { cities: {} };
+  }
+
+  try {
+    const parsedValue = JSON.parse(storedValue);
+
+    if (!isStoredSelectedLinesByCity(parsedValue)) {
+      return { cities: {} };
+    }
+
+    return parsedValue;
+  } catch {
+    return { cities: {} };
+  }
+}
+
+function getStoredSelectedLineIds(cityId: string | null): string[] {
+  if (!cityId) {
+    return [];
+  }
+
+  return loadSelectedLineIdsByCity().cities[cityId]?.selectedLineIds ?? [];
+}
+
+function saveSelectedLineIds(cityId: string, selectedLineIds: string[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storedValue = loadSelectedLineIdsByCity();
+  storedValue.cities[cityId] = {
+    selectedLineIds
+  };
+  window.localStorage.setItem(SELECTED_LINES_STORAGE_KEY, JSON.stringify(storedValue));
+}
+
 function getLinesCountLabel(lineCount: number): string {
   return lineCount <= 0 ? "Aucune" : `${lineCount} ligne(s)`;
 }
 
 export function App(): JSX.Element {
-  const { nonBlockingError, setNonBlockingError } = useAppStore();
-  const [watchSelections, setWatchSelections] = useState<WatchSelection[]>(loadWatchSelections);
+  const {
+    nonBlockingError,
+    selectedCity,
+    availableCities,
+    citySelectionRequired,
+    setNonBlockingError,
+    setSelectedCityId
+  } = useAppStore();
+  const [watchSelections, setWatchSelections] = useState<WatchSelection[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [draftStop, setDraftStop] = useState<Stop | null>(null);
   const [draftDirectionKey, setDraftDirectionKey] = useState<string>("");
   const [draftLineIds, setDraftLineIds] = useState<string[]>([]);
+  const [selectedLineIdsByCity, setSelectedLineIdsByCity] = useState<string[]>([]);
   const deferredQuery = useDeferredValue(searchQuery);
-  const { stops, loading: stopsLoading, error: stopsError } = useStopsSearch(deferredQuery);
-  const { lines, error: linesError } = useLinesByStop(draftStop?.id ?? null);
+  const selectedCityId = selectedCity?.id ?? null;
+  const selectedCityLabel = selectedCity ? `${selectedCity.name} · ${selectedCity.networkLabel}` : "Aucune ville";
+  const isCityReady = Boolean(selectedCityId);
+  const { stops, loading: stopsLoading, error: stopsError } = useStopsSearch(isCityReady ? deferredQuery : "");
+  const { lines, error: linesError } = useLinesByStop(isCityReady ? (draftStop?.id ?? null) : null);
   const lastUpdatedLabel = useMemo(() => formatLastUpdatedAt(appLastUpdatedAt), []);
 
   const directionOptions = useMemo(() => getDirectionOptions(lines), [lines]);
@@ -185,12 +274,55 @@ export function App(): JSX.Element {
   }, [draftLineIds, linesForDirection]);
 
   useEffect(() => {
-    window.localStorage.setItem(WATCH_SELECTIONS_STORAGE_KEY, JSON.stringify(watchSelections));
-  }, [watchSelections]);
+    setWatchSelections(loadWatchSelections(selectedCityId));
+    setSelectedLineIdsByCity(getStoredSelectedLineIds(selectedCityId));
+    setSearchQuery("");
+    setDraftStop(null);
+    setDraftDirectionKey("");
+    setDraftLineIds([]);
+  }, [selectedCityId]);
+
+  useEffect(() => {
+    if (!selectedCityId) {
+      return;
+    }
+
+    window.localStorage.setItem(getWatchSelectionsStorageKey(selectedCityId), JSON.stringify(watchSelections));
+  }, [selectedCityId, watchSelections]);
+
+  useEffect(() => {
+    if (!selectedCityId) {
+      return;
+    }
+
+    saveSelectedLineIds(selectedCityId, selectedLineIdsByCity);
+  }, [selectedCityId, selectedLineIdsByCity]);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [watchSelections]);
+
+  useEffect(() => {
+    if (!draftDirectionKey) {
+      return;
+    }
+
+    if (linesForDirection.length === 0) {
+      setDraftLineIds([]);
+      return;
+    }
+
+    const availableLineIds = new Set(linesForDirection.map((line) => line.id));
+    const restoredLineIds = selectedLineIdsByCity.filter((lineId) => availableLineIds.has(lineId));
+
+    setDraftLineIds((currentLineIds) => {
+      const currentMatchesStored =
+        currentLineIds.length === restoredLineIds.length &&
+        currentLineIds.every((lineId, index) => lineId === restoredLineIds[index]);
+
+      return currentMatchesStored ? currentLineIds : restoredLineIds;
+    });
+  }, [draftDirectionKey, linesForDirection, selectedLineIdsByCity]);
 
   useEffect(() => {
     function handleUpdateStatus(event: Event): void {
@@ -221,23 +353,32 @@ export function App(): JSX.Element {
 
   const handleDirectionChange = (directionKey: string): void => {
     setDraftDirectionKey(directionKey);
-    setDraftLineIds([]);
+  };
+
+  const handleCityChange = (cityId: string): void => {
+    setSelectedCityId(cityId);
   };
 
   const handleToggleDraftLine = (lineId: string): void => {
-    setDraftLineIds((currentLineIds) =>
-      currentLineIds.includes(lineId)
+    setDraftLineIds((currentLineIds) => {
+      const nextLineIds = currentLineIds.includes(lineId)
         ? currentLineIds.filter((currentLineId) => currentLineId !== lineId)
-        : [...currentLineIds, lineId]
-    );
+        : [...currentLineIds, lineId];
+
+      setSelectedLineIdsByCity(nextLineIds);
+      return nextLineIds;
+    });
   };
 
   const handleSelectAllDraftLines = (): void => {
-    setDraftLineIds(linesForDirection.map((line) => line.id));
+    const nextLineIds = linesForDirection.map((line) => line.id);
+    setDraftLineIds(nextLineIds);
+    setSelectedLineIdsByCity(nextLineIds);
   };
 
   const handleClearDraftLines = (): void => {
     setDraftLineIds([]);
+    setSelectedLineIdsByCity([]);
   };
 
   const handleConfirmDraft = (): void => {
@@ -336,20 +477,47 @@ export function App(): JSX.Element {
             className={`app-navbar__panel${isMobileMenuOpen ? " app-navbar__panel--open" : ""}`}
           >
             <div className="app-navbar__controls">
+              <label className="nav-field nav-field--city">
+                <span className="nav-field__label">Ville</span>
+                <select
+                  className="nav-select"
+                  value={selectedCityId ?? ""}
+                  onChange={(event) => {
+                    handleCityChange(event.target.value);
+                  }}
+                >
+                  <option value="" disabled>
+                    Choisir une ville
+                  </option>
+                  {availableCities.map((city) => (
+                    <option key={city.id} value={city.id}>
+                      {city.name} · {city.networkLabel}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="city-indicator" aria-live="polite">
+                <span className="city-indicator__label">Ville active</span>
+                <strong>{selectedCityLabel}</strong>
+              </div>
+
               <div className="app-navbar__search">
                 <StopSelector
                   query={searchQuery}
                   onQueryChange={setSearchQuery}
                   results={stops}
                   loading={stopsLoading}
-                  error={stopsError}
-                  selectedStop={draftStop}
+                  error={isCityReady ? stopsError : null}
+                  selectedStop={isCityReady ? draftStop : null}
+                  disabled={!isCityReady}
+                  networkLabel={selectedCity?.networkLabel ?? "reseau"}
                   onSelectStop={handleStopSelect}
                   onClearStop={handleStopClear}
                 />
               </div>
 
-              {draftStop ? (
+              {isCityReady && draftStop ? (
                 <>
                   <label className="nav-field">
                     <span className="nav-field__label">Direction</span>
@@ -431,6 +599,31 @@ export function App(): JSX.Element {
       </header>
 
       <main className="dashboard-panel">
+        {citySelectionRequired ? (
+          <section className="city-selection-prompt card" role="dialog" aria-modal="true" aria-labelledby="city-selection-title">
+            <span className="section-kicker">Configuration</span>
+            <h2 id="city-selection-title">Choisissez votre ville</h2>
+            <p>
+              Sélectionnez le reseau a afficher. Votre choix sera memorise localement pour les prochaines visites.
+            </p>
+            <div className="city-selection-prompt__actions">
+              {availableCities.map((city) => (
+                <button
+                  key={city.id}
+                  type="button"
+                  className="city-selection-prompt__button"
+                  onClick={() => {
+                    handleCityChange(city.id);
+                  }}
+                >
+                  <span>{city.name}</span>
+                  <small>{city.networkLabel}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {updateStatusMessage ? (
           <LoadingState
             title="Mise à jour de l'application"
@@ -438,7 +631,11 @@ export function App(): JSX.Element {
           />
         ) : null}
 
-        <Dashboard selections={watchSelections} />
+        <Dashboard
+          selections={watchSelections}
+          selectedCityLabel={selectedCityLabel}
+          hasSelectedCity={isCityReady}
+        />
       </main>
 
       {lastUpdatedLabel ? (

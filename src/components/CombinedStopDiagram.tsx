@@ -4,7 +4,7 @@ import { projectLineStops } from "../domain/lineProjection";
 import { positionVehicles } from "../domain/vehiclePositioning";
 import type { LineStop, RealtimePassage, VehiclePosition, WatchSelection } from "../domain/types";
 import { usePolling } from "../hooks/usePolling";
-import { tclClient } from "../services/api/tclClient";
+import { useAppStore } from "../store/useAppStore";
 import { ErrorState } from "./ErrorState";
 import { LoadingState } from "./LoadingState";
 import { NextArrivalCard } from "./NextArrivalCard";
@@ -422,12 +422,13 @@ function formatArrivalCaption(
 }
 
 export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JSX.Element {
+  const { transportAdapter } = useAppStore();
   const [state, setState] = useState<CombinedStopDiagramState>(initialState);
   const [expiredTerminalVehicleIds, setExpiredTerminalVehicleIds] = useState<Set<string>>(() => new Set());
   const hasFetchedOnce = useRef(false);
 
   const fetchSelection = useCallback(async () => {
-    if (!selection.lines.length) {
+    if (!selection.lines.length || !transportAdapter) {
       setState(initialState);
       return;
     }
@@ -442,10 +443,14 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
 
     const settledResults = await Promise.allSettled(
       selection.lines.map(async (selectionLine) => {
-        const lineStops = await tclClient.getLineStops(selectionLine.line.id, selectionLine.direction.id, selection.stop.id);
+        const lineStops = await transportAdapter.getLineStops(
+          selectionLine.line.id,
+          selectionLine.direction.id,
+          selection.stop.id
+        );
 
         try {
-          const vehicles = await tclClient.getRealtimeVehicles(
+          const vehicles = await transportAdapter.getRealtimeVehicles(
             selectionLine.line.id,
             selectionLine.direction.id,
             selection.stop.id
@@ -477,7 +482,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
     let passages: RealtimePassage[] = [];
 
     try {
-      passages = await tclClient.getRealtimePassages(
+      passages = await transportAdapter.getRealtimePassages(
         selection.stop.id,
         selection.lines.map((selectionLine) => ({
           lineId: selectionLine.line.id,
@@ -508,7 +513,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
           : null),
       updatedAt: getLatestUpdatedAt(successfulLines.map((selectionLine) => selectionLine.updatedAt))
     });
-  }, [selection]);
+  }, [selection, transportAdapter]);
 
   useEffect(() => {
     hasFetchedOnce.current = false;

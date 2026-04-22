@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Line } from "../domain/types";
-import { tclClient } from "../services/api/tclClient";
+import { useAppStore } from "../store/useAppStore";
 
 type LinesByStopState = {
   lines: Line[];
@@ -16,9 +16,10 @@ const initialState: LinesByStopState = {
 
 export function useLinesByStop(stopId: string | null): LinesByStopState {
   const [state, setState] = useState<LinesByStopState>(initialState);
+  const { transportAdapter } = useAppStore();
 
   useEffect(() => {
-    if (!stopId) {
+    if (!stopId || !transportAdapter) {
       setState(initialState);
       return;
     }
@@ -31,7 +32,7 @@ export function useLinesByStop(stopId: string | null): LinesByStopState {
       error: null
     }));
 
-    void tclClient
+    void transportAdapter
       .getLinesByStop(stopId)
       .then((lines) => {
         if (cancelled) {
@@ -59,7 +60,7 @@ export function useLinesByStop(stopId: string | null): LinesByStopState {
     return () => {
       cancelled = true;
     };
-  }, [stopId]);
+  }, [stopId, transportAdapter]);
 
   return state;
 }
