@@ -1,50 +1,50 @@
 # tuutuut
 
-Application web React + Vite + TypeScript pour suivre les prochains passages de bus en temps reel.
+React + Vite + TypeScript web app to track upcoming bus arrivals in real time.
 
-L'application propose une interface simple pour consulter rapidement un arret et voir :
+The app provides a simple interface to quickly inspect a stop and see:
 
-- les lignes qui desservent l'arret
-- la direction choisie
-- les prochains passages
-- les vehicules observes sur le trajet
-- suivre jusqu'a 2 arrets en parallele
+- the lines serving that stop
+- the selected direction
+- upcoming arrivals
+- vehicles currently observed on the route
+- up to 2 stops tracked in parallel
 
-## Fonctionnement
+## How It Works
 
-L'utilisateur commence par choisir une ville ou un reseau, puis recherche un arret.
+The user starts by choosing a city or transport network, then searches for a stop.
 
-Une fois l'arret selectionne, l'application permet de choisir une direction et une ou plusieurs lignes afin d'afficher un dashboard synthétique. L'interface combine les informations statiques du reseau avec les donnees temps reel pour estimer les prochains passages et visualiser la position des vehicules.
+Once a stop is selected, the app lets the user choose a direction and one or more lines to display a compact dashboard. The interface combines static network data with real-time data to estimate upcoming arrivals and visualize vehicle positions.
 
-Les donnees statiques sont embarquees dans le projet. Les donnees temps reel sont recuperees via `bus-tracker.fr`.
+Static transport data is bundled with the project. Real-time data is fetched through `bus-tracker.fr`.
 
-## Lancer l'application
+## Run Locally
 
-Installer les dependances :
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-Demarrer le serveur de developpement :
+Start the development server:
 
 ```bash
 npm run dev
 ```
 
-L'application est ensuite accessible en general sur `http://localhost:5173`.
+The app is then usually available at `http://localhost:5173`.
 
-En local, Vite proxifie les appels API pour permettre a l'application d'interroger la source temps reel pendant le developpement.
+In local development, Vite proxies API calls so the app can query the real-time data source during development.
 
 ## Build
 
-Produire un build de production :
+Create a production build:
 
 ```bash
 npm run build
 ```
 
-Previsualiser le build localement :
+Preview the production build locally:
 
 ```bash
 npm run preview
