@@ -4,11 +4,9 @@ import type {
   LineStop,
   RealtimePassage,
   Stop,
-  VehiclePosition,
-  VehicleStatus
+  VehiclePosition
 } from "../../../domain/types";
 import {
-  type CatalogLine,
   type TheoreticalService,
   type TheoreticalTimetables,
   getCatalogLineStops,
@@ -18,64 +16,8 @@ import {
   resolveStopIds,
   searchCatalogStops
 } from "../t2cCatalogData";
-import type { CatalogRuntime } from "../t2cCatalogData";
-
-type ProjectedVehicleSegment = {
-  stopIdPrevious?: string;
-  stopIdNext?: string;
-  progressBetweenStops?: number;
-  scalar?: number;
-};
-
-type CoordinatePoint = {
-  lat: number;
-  lon: number;
-};
-
-type BusTrackerLine = {
-  id: number;
-  references?: string[];
-  number: string;
-  girouetteNumber?: string | null;
-  color?: string | null;
-  textColor?: string | null;
-  onlineVehicleCount?: number;
-};
-
-type BusTrackerNetwork = {
-  id: number;
-  ref: string;
-  name: string;
-  lines?: BusTrackerLine[];
-};
-
-type BusTrackerVehicle = {
-  id: number;
-  number: string;
-  designation?: string | null;
-  lastSeenAt?: string | null;
-  activity?: {
-    status?: string;
-    since?: string | null;
-    lineId?: number;
-    markerId?: string;
-    position?: {
-      latitude: number;
-      longitude: number;
-    };
-  };
-};
-
-type VehicleDirectionEstimate = {
-  inferredDirection: "forward" | "backward" | "unknown";
-  status: VehicleStatus;
-};
-
-type VehicleDirectionSnapshot = {
-  scalar: number;
-  inferredDirection: "forward" | "backward" | "unknown";
-  timestampMs: number;
-};
+import { filterVehiclesAtOrBeforeAnchor, realtimeService } from "../../realtime/realtimeService";
+import type { CityRealtimeConfig } from "../../realtime/types";
 
 type RealtimePassageContext = {
   request: RealtimePassageRequest;
@@ -84,22 +26,7 @@ type RealtimePassageContext = {
   realtimePassages: RealtimePassage[];
 };
 
-const busTrackerApiBaseUrl = normalizeBusTrackerApiBaseUrl(import.meta.env.VITE_BUS_TRACKER_PROXY_PATH);
-const busTrackerNetworkId = 101;
 const orderedStopsCache = new Map<string, Promise<LineStop[]>>();
-const busTrackerLineCache = new Map<string, Promise<BusTrackerLine | null>>();
-const vehicleDirectionSnapshots = new Map<string, VehicleDirectionSnapshot>();
-let busTrackerNetworkPromise: Promise<BusTrackerNetwork> | null = null;
-
-function normalizeBusTrackerApiBaseUrl(value: string | undefined): string {
-  const trimmedValue = value?.trim();
-
-  if (!trimmedValue) {
-    return "/api/bus-tracker";
-  }
-
-  return trimmedValue.startsWith("/") ? trimmedValue : `/${trimmedValue}`;
-}
 
 function normalizeText(value: string): string {
   return normalizeCatalogText(value);
@@ -109,12 +36,8 @@ function normalizeIdentifier(value: string): string {
   return normalizeText(value).replace(/[^a-z0-9]+/g, "");
 }
 
-function normalizeBusTrackerLineRef(value: string): string {
+export function normalizeT2cRealtimeLineReference(value: string): string {
   return normalizeIdentifier(value).replace(/^[a-z0-9]*line/, "");
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function getLineStopCacheKey(lineId: string, directionId?: string, anchorStopId?: string): string {
@@ -136,395 +59,6 @@ async function loadOrderedLineStops(
   const pendingValue = getCatalogLineStops(lineId, directionId, anchorStopId);
   orderedStopsCache.set(cacheKey, pendingValue);
   return pendingValue;
-}
-
-function getCoordinatePoint(stopById: Map<string, Stop>, stopId: string): CoordinatePoint | null {
-  const stop = stopById.get(stopId);
-
-  if (!stop || stop.lat === undefined || stop.lon === undefined) {
-    return null;
-  }
-
-  return {
-    lat: stop.lat,
-    lon: stop.lon
-  };
-}
-
-function toCartesian(point: CoordinatePoint, referenceLat: number): { x: number; y: number } {
-  const radians = Math.PI / 180;
-  const metersPerLatDegree = 111_132;
-  const metersPerLonDegree = 111_320 * Math.cos(referenceLat * radians);
-
-  return {
-    x: point.lon * metersPerLonDegree,
-    y: point.lat * metersPerLatDegree
-  };
-}
-
-function projectGpsToLine(
-  location: CoordinatePoint,
-  lineStops: LineStop[],
-  stopById: Map<string, Stop>
-): ProjectedVehicleSegment | null {
-  const referenceLat = location.lat;
-  const projectedLocation = toCartesian(location, referenceLat);
-  let bestProjection:
-    | {
-        distanceMeters: number;
-        stopIdPrevious: string;
-        stopIdNext: string;
-        progressBetweenStops: number;
-      }
-    | undefined;
-
-  for (let index = 0; index < lineStops.length - 1; index += 1) {
-    const currentStop = lineStops[index];
-    const nextStop = lineStops[index + 1];
-
-    if (!currentStop || !nextStop) {
-      continue;
-    }
-
-    const currentPoint = getCoordinatePoint(stopById, currentStop.stopId);
-    const nextPoint = getCoordinatePoint(stopById, nextStop.stopId);
-
-    if (!currentPoint || !nextPoint) {
-      continue;
-    }
-
-    const a = toCartesian(currentPoint, referenceLat);
-    const b = toCartesian(nextPoint, referenceLat);
-    const segmentX = b.x - a.x;
-    const segmentY = b.y - a.y;
-    const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
-
-    if (segmentLengthSquared <= 0) {
-      continue;
-    }
-
-    const rawProgress =
-      ((projectedLocation.x - a.x) * segmentX + (projectedLocation.y - a.y) * segmentY) / segmentLengthSquared;
-    const progressBetweenStops = clamp(rawProgress, 0, 1);
-    const projectionX = a.x + segmentX * progressBetweenStops;
-    const projectionY = a.y + segmentY * progressBetweenStops;
-    const deltaX = projectedLocation.x - projectionX;
-    const deltaY = projectedLocation.y - projectionY;
-    const distanceMeters = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-    if (!bestProjection || distanceMeters < bestProjection.distanceMeters) {
-      bestProjection = {
-        distanceMeters,
-        stopIdPrevious: currentStop.stopId,
-        stopIdNext: nextStop.stopId,
-        progressBetweenStops
-      };
-    }
-  }
-
-  if (!bestProjection || bestProjection.distanceMeters > 450) {
-    return null;
-  }
-
-  return {
-    stopIdPrevious: bestProjection.stopIdPrevious,
-    stopIdNext: bestProjection.stopIdNext,
-    progressBetweenStops: bestProjection.progressBetweenStops,
-    scalar:
-      lineStops.findIndex((stop) => stop.stopId === bestProjection.stopIdPrevious) +
-      bestProjection.progressBetweenStops
-  };
-}
-
-function pruneVehicleDirectionSnapshots(nowMs: number): void {
-  for (const [snapshotKey, snapshot] of vehicleDirectionSnapshots.entries()) {
-    if (nowMs - snapshot.timestampMs > 20 * 60 * 1000) {
-      vehicleDirectionSnapshots.delete(snapshotKey);
-    }
-  }
-}
-
-function estimateVehicleDirection(snapshotKey: string, scalar: number, timestamp: string): VehicleDirectionEstimate {
-  const nowMs = Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : Date.now();
-  const previousSnapshot = vehicleDirectionSnapshots.get(snapshotKey);
-  let inferredDirection: VehicleDirectionSnapshot["inferredDirection"] = previousSnapshot?.inferredDirection ?? "unknown";
-  let status: VehicleStatus = previousSnapshot ? "STOPPED" : "UNKNOWN";
-
-  if (previousSnapshot) {
-    const delta = scalar - previousSnapshot.scalar;
-
-    if (Math.abs(delta) >= 0.04) {
-      inferredDirection = delta > 0 ? "forward" : "backward";
-      status = "IN_TRANSIT";
-    } else if (previousSnapshot.inferredDirection !== "unknown") {
-      inferredDirection = previousSnapshot.inferredDirection;
-    }
-  }
-
-  vehicleDirectionSnapshots.set(snapshotKey, {
-    scalar,
-    inferredDirection,
-    timestampMs: nowMs
-  });
-  pruneVehicleDirectionSnapshots(nowMs);
-
-  return {
-    inferredDirection,
-    status
-  };
-}
-
-async function fetchBusTrackerJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${busTrackerApiBaseUrl}/${path}`, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`API Bus Tracker indisponible (${response.status}) sur ${path}.`);
-  }
-
-  return (await response.json()) as T;
-}
-
-async function loadBusTrackerNetwork(): Promise<BusTrackerNetwork> {
-  if (busTrackerNetworkPromise) {
-    return busTrackerNetworkPromise;
-  }
-
-  busTrackerNetworkPromise = fetchBusTrackerJson<BusTrackerNetwork>(`networks/${busTrackerNetworkId}?withDetails=true`);
-  return busTrackerNetworkPromise;
-}
-
-function busTrackerLineMatchesCatalogLine(candidate: BusTrackerLine, line: CatalogLine): boolean {
-  const normalizedShortName = normalizeIdentifier(line.shortName);
-  const normalizedLineId = normalizeIdentifier(line.id);
-  const candidateNumbers = [candidate.number, candidate.girouetteNumber]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => normalizeIdentifier(value));
-  const candidateRefs = (candidate.references ?? []).map(normalizeBusTrackerLineRef);
-
-  return (
-    candidateNumbers.includes(normalizedShortName) ||
-    candidateNumbers.includes(normalizedLineId) ||
-    candidateRefs.includes(normalizedShortName) ||
-    candidateRefs.includes(normalizedLineId)
-  );
-}
-
-async function resolveBusTrackerLine(line: CatalogLine): Promise<BusTrackerLine | null> {
-  const cachedValue = busTrackerLineCache.get(line.id);
-
-  if (cachedValue) {
-    return cachedValue;
-  }
-
-  const pendingValue = loadBusTrackerNetwork().then((network) => {
-    const matchedLine = network.lines?.find((candidateLine) => busTrackerLineMatchesCatalogLine(candidateLine, line));
-    return matchedLine ?? null;
-  });
-
-  busTrackerLineCache.set(line.id, pendingValue);
-  return pendingValue;
-}
-
-function buildVehicleFromBusTrackerVehicle(
-  vehicle: BusTrackerVehicle,
-  lineId: string,
-  directionId: string | undefined,
-  lineStops: LineStop[],
-  stopById: Map<string, Stop>
-): VehiclePosition | null {
-  const position = vehicle.activity?.position;
-
-  if (!position) {
-    return null;
-  }
-
-  const projectedSegment = projectGpsToLine(
-    {
-      lat: position.latitude,
-      lon: position.longitude
-    },
-    lineStops,
-    stopById
-  );
-
-  if (!projectedSegment || projectedSegment.scalar === undefined) {
-    return null;
-  }
-
-  const timestamp = vehicle.lastSeenAt ?? vehicle.activity?.since ?? new Date().toISOString();
-  const estimate = estimateVehicleDirection(`${lineId}:${vehicle.id}`, projectedSegment.scalar, timestamp);
-
-  if (estimate.inferredDirection === "backward") {
-    return null;
-  }
-
-  return {
-    vehicleId: String(vehicle.id),
-    lineId,
-    ...(directionId ? { directionId } : {}),
-    ...(projectedSegment.stopIdPrevious ? { stopIdPrevious: projectedSegment.stopIdPrevious } : {}),
-    ...(projectedSegment.stopIdNext ? { stopIdNext: projectedSegment.stopIdNext } : {}),
-    ...(projectedSegment.progressBetweenStops !== undefined
-      ? { progressBetweenStops: clamp(projectedSegment.progressBetweenStops, 0, 1) }
-      : {}),
-    timestamp,
-    status: estimate.status
-  };
-}
-
-async function fetchBusTrackerRealtimeVehicles(
-  line: CatalogRuntime["lines"][number],
-  directionId: string | undefined,
-  lineStops: LineStop[],
-  stopById: CatalogRuntime["stopById"]
-): Promise<VehiclePosition[]> {
-  const busTrackerLine = await resolveBusTrackerLine(line);
-
-  if (!busTrackerLine) {
-    return [];
-  }
-
-  const vehicles = await fetchBusTrackerJson<BusTrackerVehicle[]>(`lines/${busTrackerLine.id}/online-vehicles`);
-
-  return vehicles
-    .map((vehicle) => buildVehicleFromBusTrackerVehicle(vehicle, line.id, directionId, lineStops, stopById))
-    .filter((vehicle): vehicle is VehiclePosition => vehicle !== null);
-}
-
-function findAnchorIndex(fullLineStops: LineStop[], displayedLineStops: LineStop[]): number | null {
-  const anchorStop = displayedLineStops.at(-1);
-
-  if (!anchorStop) {
-    return null;
-  }
-
-  const exactIndex = fullLineStops.findIndex((stop) => stop.stopId === anchorStop.stopId);
-
-  if (exactIndex >= 0) {
-    return exactIndex;
-  }
-
-  const normalizedAnchorName = normalizeText(anchorStop.stopName);
-  const nameMatches = fullLineStops
-    .map((stop, index) => ({
-      index,
-      isMatch: normalizeText(stop.stopName) === normalizedAnchorName
-    }))
-    .filter((entry) => entry.isMatch)
-    .map((entry) => entry.index);
-
-  return nameMatches.at(-1) ?? null;
-}
-
-function filterVehiclesAtOrBeforeAnchor(
-  vehicles: VehiclePosition[],
-  fullLineStops: LineStop[],
-  displayedLineStops: LineStop[]
-): VehiclePosition[] {
-  const anchorIndex = findAnchorIndex(fullLineStops, displayedLineStops);
-
-  if (anchorIndex === null) {
-    return vehicles;
-  }
-
-  const stopIndexById = new Map(fullLineStops.map((stop, index) => [stop.stopId, index]));
-
-  return vehicles.filter((vehicle) => {
-    const previousIndex = vehicle.stopIdPrevious ? stopIndexById.get(vehicle.stopIdPrevious) : undefined;
-    const nextIndex = vehicle.stopIdNext ? stopIndexById.get(vehicle.stopIdNext) : undefined;
-
-    if ((previousIndex ?? -1) > anchorIndex || (nextIndex ?? -1) > anchorIndex) {
-      return false;
-    }
-
-    if (previousIndex === anchorIndex && nextIndex === undefined && vehicle.status !== "STOPPED") {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-function buildRealtimePassageFromVehicle(
-  vehicle: VehiclePosition,
-  lineStops: LineStop[],
-  targetStopIds: Set<string>,
-  nowMs: number
-): RealtimePassage | null {
-  const relevantStopIds = lineStops.map((stop) => stop.stopId);
-  const currentIndex = vehicle.stopIdPrevious ? relevantStopIds.indexOf(vehicle.stopIdPrevious) : -1;
-  const nextIndex = vehicle.stopIdNext ? relevantStopIds.indexOf(vehicle.stopIdNext) : -1;
-
-  if (vehicle.stopIdPrevious && targetStopIds.has(vehicle.stopIdPrevious) && vehicle.status === "STOPPED") {
-    return {
-      vehicleId: vehicle.vehicleId,
-      lineId: vehicle.lineId,
-      stopId: vehicle.stopIdPrevious,
-      expectedAt: new Date(nowMs).toISOString(),
-      minutesAway: 0,
-      status: "DUE",
-      sourceType: "REALTIME",
-      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
-    };
-  }
-
-  if (currentIndex < 0 || nextIndex <= currentIndex) {
-    return null;
-  }
-
-  let estimatedSeconds = 0;
-
-  for (let index = currentIndex + 1; index <= nextIndex; index += 1) {
-    const traversedSegmentSeconds =
-      index === nextIndex && vehicle.progressBetweenStops !== undefined
-        ? Math.max(0, Math.round((1 - clamp(vehicle.progressBetweenStops, 0, 1)) * 45))
-        : 45;
-    estimatedSeconds += traversedSegmentSeconds;
-
-    const stopId = relevantStopIds[index];
-
-    if (!stopId || !targetStopIds.has(stopId)) {
-      continue;
-    }
-
-    return {
-      vehicleId: vehicle.vehicleId,
-      lineId: vehicle.lineId,
-      stopId,
-      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
-      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
-      status: estimatedSeconds < 45 ? "DUE" : "APPROACHING",
-      sourceType: "REALTIME",
-      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
-    };
-  }
-
-  for (let index = nextIndex + 1; index < relevantStopIds.length; index += 1) {
-    estimatedSeconds += 45;
-    const stopId = relevantStopIds[index];
-
-    if (!stopId || !targetStopIds.has(stopId)) {
-      continue;
-    }
-
-    return {
-      vehicleId: vehicle.vehicleId,
-      lineId: vehicle.lineId,
-      stopId,
-      expectedAt: new Date(nowMs + estimatedSeconds * 1000).toISOString(),
-      minutesAway: Math.max(0, Math.round(estimatedSeconds / 60)),
-      status: "SCHEDULED",
-      sourceType: "REALTIME",
-      ...(vehicle.directionId ? { directionId: vehicle.directionId } : {})
-    };
-  }
-
-  return null;
 }
 
 function mapPassageTypeToStatus(sourceType: "REALTIME" | "THEORETICAL", expectedAt: string, nowMs: number): RealtimePassage["status"] {
@@ -824,7 +358,8 @@ async function buildTheoreticalPassages(
   return results.sort((left, right) => left.expectedAt.localeCompare(right.expectedAt)).slice(0, 16);
 }
 
-export const t2cAdapter: TransportAdapter = {
+export function createT2cAdapter(realtimeConfig: CityRealtimeConfig): TransportAdapter {
+  const adapter: TransportAdapter = {
   source: {
     mode: "t2c",
     label: "GPS temps reel via Bus Tracker",
@@ -861,7 +396,16 @@ export const t2cAdapter: TransportAdapter = {
       return [];
     }
 
-    const vehicles = await fetchBusTrackerRealtimeVehicles(line, directionId, fullLineStops, stopById);
+    const vehicles = await realtimeService.getVehicles({
+      networkId: realtimeConfig.networkId,
+      line,
+      ...(directionId ? { directionId } : {}),
+      lineStops: fullLineStops,
+      stopById,
+      ...(realtimeConfig.normalizeLineReference
+        ? { normalizeLineReference: realtimeConfig.normalizeLineReference }
+        : {})
+    });
     return filterVehiclesAtOrBeforeAnchor(vehicles, fullLineStops, displayedLineStops);
   },
 
@@ -883,11 +427,22 @@ export const t2cAdapter: TransportAdapter = {
         const [fullLineStops, lineStops, vehicles] = await Promise.all([
           loadOrderedLineStops(request.lineId, request.directionId),
           loadOrderedLineStops(request.lineId, request.directionId, request.anchorStopId),
-          t2cAdapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId)
+          adapter.getRealtimeVehicles(request.lineId, request.directionId, request.anchorStopId)
         ]);
-        const realtimePassages = vehicles
-          .map((vehicle) => buildRealtimePassageFromVehicle(vehicle, lineStops, targetStopIds, Date.now()))
-          .filter((passage): passage is RealtimePassage => passage !== null);
+        const line = runtime.lineById.get(request.lineId);
+        const realtimePassages = line
+          ? await realtimeService.getPassages({
+              networkId: realtimeConfig.networkId,
+              line,
+              ...(request.directionId ? { directionId: request.directionId } : {}),
+              lineStops,
+              stopById: runtime.stopById,
+              ...(realtimeConfig.normalizeLineReference
+                ? { normalizeLineReference: realtimeConfig.normalizeLineReference }
+                : {}),
+              targetStopIds
+            })
+          : [];
 
         return {
           context: {
@@ -911,4 +466,7 @@ export const t2cAdapter: TransportAdapter = {
       .sort((left, right) => left.expectedAt.localeCompare(right.expectedAt))
       .slice(0, 16);
   }
-};
+  };
+
+  return adapter;
+}

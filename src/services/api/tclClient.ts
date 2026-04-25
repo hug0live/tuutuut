@@ -6,7 +6,7 @@ import type {
   Stop,
   VehiclePosition
 } from "../../domain/types";
-import { tclAdapter } from "./adapters/tclAdapter";
+import { defaultCity } from "../../config/cities";
 
 export type RealtimePassageRequest = {
   lineId: string;
@@ -35,7 +35,11 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
 }
 
 export function getTransportAdapter(): TransportAdapter {
-  return tclAdapter;
+  if (!defaultCity) {
+    throw new Error("No transport adapter is configured.");
+  }
+
+  return defaultCity.adapter;
 }
 
 export const tclClient = getTransportAdapter();
