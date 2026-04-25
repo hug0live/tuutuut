@@ -71,7 +71,7 @@ export type RealtimePassage = {
   sourceType?: "REALTIME" | "THEORETICAL";
 };
 
-export type DataSourceMode = "tcl" | "t2c";
+export type DataSourceMode = "tcl" | "t2c" | "tbm";
 
 export type AdapterSourceInfo = {
   mode: DataSourceMode;

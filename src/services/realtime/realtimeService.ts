@@ -1,16 +1,27 @@
 import type { LineStop, VehiclePosition } from "../../domain/types";
 import { busTrackerProvider } from "./busTrackerProvider";
-import type { RealtimeProvider, RealtimeProviderPassageRequest, RealtimeProviderRequest } from "./types";
+import type {
+  RealtimeProvider,
+  RealtimeProviderLine,
+  RealtimeProviderNetworkLinesRequest,
+  RealtimeProviderPassageRequest,
+  RealtimeProviderRequest
+} from "./types";
 
 const defaultRealtimeProvider = busTrackerProvider;
 
 export type RealtimeService = {
+  getNetworkLines(request: RealtimeProviderNetworkLinesRequest): Promise<RealtimeProviderLine[]>;
   getVehicles(request: RealtimeProviderRequest): Promise<VehiclePosition[]>;
   getPassages(request: RealtimeProviderPassageRequest): ReturnType<RealtimeProvider["getPassages"]>;
 };
 
 export function createRealtimeService(provider: RealtimeProvider = defaultRealtimeProvider): RealtimeService {
   return {
+    getNetworkLines(request: RealtimeProviderNetworkLinesRequest): Promise<RealtimeProviderLine[]> {
+      return provider.getNetworkLines(request);
+    },
+
     getVehicles(request: RealtimeProviderRequest): Promise<VehiclePosition[]> {
       return provider.getVehicles(request);
     },

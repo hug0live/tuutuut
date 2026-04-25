@@ -2,6 +2,7 @@ import type { LineStop, RealtimePassage, Stop, VehiclePosition, VehicleStatus } 
 import type {
   RealtimeProvider,
   RealtimeProviderLine,
+  RealtimeProviderNetworkLinesRequest,
   RealtimeProviderPassageRequest,
   RealtimeProviderRequest
 } from "./types";
@@ -23,6 +24,9 @@ type BusTrackerLine = {
   references?: string[];
   number: string;
   girouetteNumber?: string | null;
+  color?: string | null;
+  textColor?: string | null;
+  archivedAt?: string | null;
 };
 
 type BusTrackerNetwork = {
@@ -265,6 +269,32 @@ function busTrackerLineMatchesCatalogLine(
   );
 }
 
+function formatBusTrackerColor(value: string | null | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return value.startsWith("#") ? value : `#${value}`;
+}
+
+function buildProviderLine(
+  line: BusTrackerLine,
+  normalizeLineReference: (value: string) => string
+): RealtimeProviderLine {
+  const primaryReference = line.references?.find((reference) => normalizeLineReference(reference).length > 0);
+  const id = primaryReference ? normalizeLineReference(primaryReference) : String(line.id);
+  const color = formatBusTrackerColor(line.color);
+  const textColor = formatBusTrackerColor(line.textColor);
+
+  return {
+    id,
+    shortName: line.girouetteNumber ?? line.number,
+    longName: line.number,
+    ...(color ? { color } : {}),
+    ...(textColor ? { textColor } : {})
+  };
+}
+
 async function resolveBusTrackerLine(request: RealtimeProviderRequest): Promise<BusTrackerLine | null> {
   const cacheKey = `${request.networkId}:${request.line.id}`;
   const cachedValue = lineCache.get(cacheKey);
@@ -417,6 +447,26 @@ function buildRealtimePassageFromVehicle(
 
 export const busTrackerProvider: RealtimeProvider = {
   id: "bus-tracker",
+
+  async getNetworkLines(request: RealtimeProviderNetworkLinesRequest): Promise<RealtimeProviderLine[]> {
+    try {
+      const network = await loadBusTrackerNetwork(request.networkId);
+      const normalizeLineReference = request.normalizeLineReference ?? normalizeIdentifier;
+
+      return (network.lines ?? [])
+        .filter((line) => !line.archivedAt)
+        .map((line) => buildProviderLine(line, normalizeLineReference))
+        .sort((left, right) =>
+          left.shortName.localeCompare(right.shortName, "fr", {
+            numeric: true,
+            sensitivity: "base"
+          })
+        );
+    } catch (error) {
+      console.warn("Bus Tracker network lines are unavailable.", error);
+      return [];
+    }
+  },
 
   async getVehicles(request: RealtimeProviderRequest): Promise<VehiclePosition[]> {
     try {

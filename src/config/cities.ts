@@ -1,6 +1,7 @@
 import type { TransportAdapter } from "../services/api/tclClient";
 import { createTclAdapter, normalizeTclRealtimeLineReference } from "../services/api/adapters/tclAdapter";
 import { createT2cAdapter, normalizeT2cRealtimeLineReference } from "../services/api/adapters/t2cAdapter";
+import { createTbmAdapter, normalizeTbmRealtimeLineReference } from "../services/api/adapters/tbmAdapter";
 import type { CityRealtimeConfig, RealtimeProviderId } from "../services/realtime/types";
 
 export type CityDefinition = {
@@ -8,6 +9,7 @@ export type CityDefinition = {
   name: string;
   region: string;
   networkLabel: string;
+  transportProvider: string;
   provider: string;
   realtimeProvider: RealtimeProviderId;
   realtimeConfig: CityRealtimeConfig;
@@ -28,12 +30,20 @@ const clermontFerrandRealtimeConfig = {
   normalizeLineReference: normalizeT2cRealtimeLineReference
 } satisfies CityRealtimeConfig;
 
+const bordeauxRealtimeConfig = {
+  provider: "bus-tracker",
+  providerCityId: "bordeaux",
+  networkId: 4,
+  normalizeLineReference: normalizeTbmRealtimeLineReference
+} satisfies CityRealtimeConfig;
+
 export const availableCities: CityDefinition[] = [
   {
     id: "lyon",
     name: "Lyon",
     region: "Auvergne-Rhone-Alpes",
     networkLabel: "TCL",
+    transportProvider: "TCL",
     provider: "TCL",
     realtimeProvider: lyonRealtimeConfig.provider,
     realtimeConfig: lyonRealtimeConfig,
@@ -44,10 +54,22 @@ export const availableCities: CityDefinition[] = [
     name: "Clermont-Ferrand",
     region: "Auvergne-Rhone-Alpes",
     networkLabel: "T2C",
+    transportProvider: "T2C",
     provider: "T2C",
     realtimeProvider: clermontFerrandRealtimeConfig.provider,
     realtimeConfig: clermontFerrandRealtimeConfig,
     adapter: createT2cAdapter(clermontFerrandRealtimeConfig)
+  },
+  {
+    id: "bordeaux",
+    name: "Bordeaux",
+    region: "Nouvelle-Aquitaine",
+    networkLabel: "TBM",
+    transportProvider: "TBM",
+    provider: "TBM",
+    realtimeProvider: bordeauxRealtimeConfig.provider,
+    realtimeConfig: bordeauxRealtimeConfig,
+    adapter: createTbmAdapter(bordeauxRealtimeConfig)
   }
 ];
 
