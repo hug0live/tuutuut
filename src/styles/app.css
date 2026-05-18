@@ -917,14 +917,37 @@ button {
   border: 1px solid rgba(16, 32, 39, 0.06);
 }
 
-.mobile-arrivals-card__label {
-  display: block;
+.mobile-arrivals-card__item--realtime {
+  background: rgba(255, 255, 255, 0.92);
+  animation: realtimeCardFade 3.8s infinite ease-in-out;
+}
+
+.mobile-arrivals-card__item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
   margin-bottom: 10px;
+}
+
+.mobile-arrivals-card__label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   color: var(--muted);
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 700;
+}
+
+.mobile-arrivals-card__source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--accent);
 }
 
 .mobile-arrivals-card__value {
@@ -967,7 +990,8 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .next-arrival-card--realtime {
+  .next-arrival-card--realtime,
+  .mobile-arrivals-card__item--realtime {
     animation: none;
   }
 }

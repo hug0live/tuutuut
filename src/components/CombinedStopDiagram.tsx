@@ -779,6 +779,8 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
   }, [selection.lines, state.lines, state.passages]);
   const nextArrival = arrivalCandidates[0] ?? null;
   const followingArrival = arrivalCandidates[1] ?? null;
+  const isNextArrivalRealtime = nextArrival?.sourceType === "REALTIME";
+  const isFollowingArrivalRealtime = followingArrival?.sourceType === "REALTIME";
   const showMobileDiagram = !(state.loading && state.lines.length === 0) && !(state.error && state.lines.length === 0);
 
   let diagramContent: JSX.Element;
@@ -905,8 +907,23 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
         </div>
 
         <div className="mobile-arrivals-card__grid">
-          <section className="mobile-arrivals-card__item">
-            <span className="mobile-arrivals-card__label">Prochain bus</span>
+          <section
+            className={`mobile-arrivals-card__item${
+              isNextArrivalRealtime ? " mobile-arrivals-card__item--realtime" : ""
+            }`}
+          >
+            <div className="mobile-arrivals-card__item-header">
+              <span className="mobile-arrivals-card__label">Prochain bus</span>
+              {isNextArrivalRealtime ? (
+                <span className="mobile-arrivals-card__source" aria-label="Horaire temps réel" title="Horaire temps réel">
+                  <span className="next-arrival-card__realtime-icon" aria-hidden="true">
+                    <span className="next-arrival-card__realtime-dot" />
+                    <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--inner" />
+                    <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--outer" />
+                  </span>
+                </span>
+              ) : null}
+            </div>
             <strong className="mobile-arrivals-card__value">{formatArrivalValue(nextArrival, state.loading, state.error)}</strong>
             <p className="mobile-arrivals-card__caption">
               {formatArrivalCaption(
@@ -920,8 +937,23 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
             </p>
           </section>
 
-          <section className="mobile-arrivals-card__item">
-            <span className="mobile-arrivals-card__label">Bus suivant</span>
+          <section
+            className={`mobile-arrivals-card__item${
+              isFollowingArrivalRealtime ? " mobile-arrivals-card__item--realtime" : ""
+            }`}
+          >
+            <div className="mobile-arrivals-card__item-header">
+              <span className="mobile-arrivals-card__label">Bus suivant</span>
+              {isFollowingArrivalRealtime ? (
+                <span className="mobile-arrivals-card__source" aria-label="Horaire temps réel" title="Horaire temps réel">
+                  <span className="next-arrival-card__realtime-icon" aria-hidden="true">
+                    <span className="next-arrival-card__realtime-dot" />
+                    <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--inner" />
+                    <span className="next-arrival-card__realtime-wave next-arrival-card__realtime-wave--outer" />
+                  </span>
+                </span>
+              ) : null}
+            </div>
             <strong className="mobile-arrivals-card__value">
               {formatArrivalValue(followingArrival, state.loading, state.error)}
             </strong>
