@@ -694,6 +694,23 @@ button {
   stroke-width: 4;
 }
 
+.stop-marker__label {
+  fill: rgba(16, 32, 39, 0.76);
+  font-size: 13px;
+  font-weight: 800;
+  dominant-baseline: central;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.stop-marker--selected .stop-marker__label {
+  fill: #0b7a75;
+  font-size: 14px;
+}
+
 .vehicle-marker {
   transition: transform 8.6s cubic-bezier(0.22, 1, 0.36, 1);
   transform-box: fill-box;

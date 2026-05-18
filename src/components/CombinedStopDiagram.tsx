@@ -57,6 +57,8 @@ const initialState: CombinedStopDiagramState = {
 };
 const TERMINAL_STOPPED_VISIBILITY_MS = 6_000;
 const THEORETICAL_OVERLAP_WINDOW_SECONDS = 90;
+const DESKTOP_STOP_LABEL_MIN_GAP = 86;
+const MOBILE_STOP_LABEL_MIN_GAP = 150;
 
 function normalizeStopKey(value: string): string {
   return value
@@ -78,6 +80,76 @@ function formatTime(timestamp: string | null): string {
     minute: "2-digit",
     second: "2-digit"
   }).format(new Date(timestamp));
+}
+
+function getVisibleStopLabelIds(
+  stops: Array<{ stopId: string; stopName: string; x: number }>,
+  minGap: number,
+  selectedStopName: string
+): Set<string> {
+  if (stops.length <= 2) {
+    return new Set(stops.map((stop) => stop.stopId));
+  }
+
+  const firstStop = stops[0];
+  const lastStop = stops[stops.length - 1];
+  const selectedStop = stops.find((stop) => stop.stopName === selectedStopName);
+  const usableWidth = Math.max(1, (lastStop?.x ?? 0) - (firstStop?.x ?? 0));
+  const averageGap = usableWidth / Math.max(1, stops.length - 1);
+  const labelInterval = Math.max(1, Math.ceil(minGap / averageGap));
+  const protectedIds = new Set<string>();
+  const candidateIds = new Set<string>();
+
+  if (firstStop) {
+    protectedIds.add(firstStop.stopId);
+    candidateIds.add(firstStop.stopId);
+  }
+
+  if (lastStop) {
+    protectedIds.add(lastStop.stopId);
+    candidateIds.add(lastStop.stopId);
+  }
+
+  if (selectedStop) {
+    protectedIds.add(selectedStop.stopId);
+    candidateIds.add(selectedStop.stopId);
+  }
+
+  stops.forEach((stop, index) => {
+    if (index % labelInterval === 0) {
+      candidateIds.add(stop.stopId);
+    }
+  });
+
+  const visibleStops: Array<{ stopId: string; x: number }> = [];
+
+  stops.forEach((stop) => {
+    if (!candidateIds.has(stop.stopId)) {
+      return;
+    }
+
+    const nearestProtectedStop = visibleStops.find(
+      (visibleStop) => protectedIds.has(visibleStop.stopId) && Math.abs(visibleStop.x - stop.x) < minGap
+    );
+
+    if (nearestProtectedStop && !protectedIds.has(stop.stopId)) {
+      return;
+    }
+
+    const nearestVisibleIndex = visibleStops.findIndex((visibleStop) => Math.abs(visibleStop.x - stop.x) < minGap);
+
+    if (nearestVisibleIndex >= 0) {
+      if (protectedIds.has(stop.stopId) && !protectedIds.has(visibleStops[nearestVisibleIndex]?.stopId ?? "")) {
+        visibleStops.splice(nearestVisibleIndex, 1, { stopId: stop.stopId, x: stop.x });
+      }
+
+      return;
+    }
+
+    visibleStops.push({ stopId: stop.stopId, x: stop.x });
+  });
+
+  return new Set(visibleStops.map((stop) => stop.stopId));
 }
 
 function buildCanonicalStops(lines: LoadedSelectionLine[]): {
@@ -704,6 +776,14 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
       textColor: vehicleStyleById.get(vehicle.vehicleId)?.textColor ?? "#ffffff"
     }));
   }, [canonical.stopIdToCanonicalKey, displayedCanonicalStops, expiredTerminalVehicleIds, projection, state.lines, terminalCanonicalKey]);
+  const desktopStopLabelIds = useMemo(
+    () => getVisibleStopLabelIds(projection.projectedStops, DESKTOP_STOP_LABEL_MIN_GAP, selection.stop.name),
+    [projection.projectedStops, selection.stop.name]
+  );
+  const mobileStopLabelIds = useMemo(
+    () => getVisibleStopLabelIds(projection.projectedStops, MOBILE_STOP_LABEL_MIN_GAP, selection.stop.name),
+    [projection.projectedStops, selection.stop.name]
+  );
 
   const arrivalCandidates = useMemo<CombinedNextArrival[]>(() => {
     const nowMs = Date.now();
@@ -865,6 +945,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                 stop={stop}
                 lineY={projection.lineY}
                 isSelected={stop.stopName === selection.stop.name}
+                showLabel={desktopStopLabelIds.has(stop.stopId)}
               />
             ))}
 
@@ -1003,6 +1084,7 @@ export function CombinedStopDiagram({ selection }: CombinedStopDiagramProps): JS
                     stop={stop}
                     lineY={projection.lineY}
                     isSelected={stop.stopName === selection.stop.name}
+                    showLabel={mobileStopLabelIds.has(stop.stopId)}
                   />
                 ))}
 
