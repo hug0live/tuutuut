@@ -178,7 +178,7 @@ button {
   min-width: 0;
 }
 
-.app-navbar .error-state--compact {
+.app-navbar__panel > .error-state--compact {
   display: none;
 }
 

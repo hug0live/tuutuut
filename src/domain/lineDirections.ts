@@ -1,4 +1,5 @@
 import type { DirectionOption, Line, LineDirection } from "./types";
+import { normalizeSlugText } from "./text";
 
 const FALLBACK_DIRECTION: LineDirection = {
   id: "default",
@@ -6,13 +7,7 @@ const FALLBACK_DIRECTION: LineDirection = {
 };
 
 function normalizeDirectionValue(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return normalizeSlugText(value);
 }
 
 export function getLineDirections(line: Line): LineDirection[] {

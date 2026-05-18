@@ -148,6 +148,21 @@ test("Bordeaux theoretical schedules are available for fallback waiting times", 
   assert.match(adapterSource, /concat\(theoreticalPassages\)/, "TBM adapter should append theoretical fallback passages");
 });
 
+test("text normalization avoids Unicode property regex for embedded Chromium", async () => {
+  const sources = await Promise.all([
+    readProjectFile("src/domain/text.ts"),
+    readProjectFile("src/services/api/catalogRuntime.ts"),
+    readProjectFile("src/domain/lineDirections.ts"),
+    readProjectFile("src/components/CombinedStopDiagram.tsx")
+  ]);
+
+  for (const source of sources) {
+    assert.doesNotMatch(source, /\\p\{/, "Search normalization should avoid Unicode property escapes");
+  }
+
+  assert.match(sources[0], /\\u0300-\\u036f/, "Search normalization should remove combining marks compatibly");
+});
+
 test("city adapters delegate realtime work to the shared realtime service", async () => {
   const adapterPaths = [
     "src/services/api/adapters/tclAdapter.ts",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { estimateArrivals, type EstimatedArrival } from "../domain/arrivalEstimation";
 import { projectLineStops } from "../domain/lineProjection";
+import { normalizeSlugText } from "../domain/text";
 import { positionVehicles } from "../domain/vehiclePositioning";
 import type { LineStop, RealtimePassage, VehiclePosition, WatchSelection } from "../domain/types";
 import { usePolling } from "../hooks/usePolling";
@@ -61,13 +62,7 @@ const DESKTOP_STOP_LABEL_MIN_GAP = 86;
 const MOBILE_STOP_LABEL_MIN_GAP = 150;
 
 function normalizeStopKey(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return normalizeSlugText(value);
 }
 
 function formatTime(timestamp: string | null): string {
